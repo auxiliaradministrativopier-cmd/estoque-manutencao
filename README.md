@@ -14,11 +14,15 @@ Sistema para controlar os itens do setor de manutenção: entradas (compras), sa
 | `config.js` | Endereço do Apps Script (link do App da Web, termina em `/exec`) |
 | `apps-script/Codigo.gs` | Código que lê e grava na planilha |
 
-## Senhas
+## Logins
 
-Ficam na aba **Config** da planilha. Quem entra com a senha da equipe registra movimentações e cadastra itens. Quem entra com a senha da administração também edita itens, ajusta estoque, estorna lançamentos e exporta o histórico.
+Cada pessoa tem uma linha na aba **Usuarios** da planilha: usuário, nome, senha, perfil (Manutenção ou Administração) e ativo (Sim ou Não). O nome dessa aba é o que aparece em "Registrado por" no histórico.
 
-Os dados do estoque não ficam neste repositório, só na planilha.
+- **Manutenção:** registra movimentações e cadastra itens.
+- **Administração:** também edita itens, ajusta estoque, estorna lançamentos e exporta o histórico.
+- Para bloquear alguém, escreva **Não** na coluna Ativo.
+
+Os dados do estoque e as senhas não ficam neste repositório, só na planilha.
 
 ## Se mudar o código do Apps Script
 

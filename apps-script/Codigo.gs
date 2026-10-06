@@ -8,7 +8,12 @@
  *       Executar como: Eu   |   Quem pode acessar: Qualquer pessoa
  *  4. Autorize o acesso quando o Google pedir e copie o link do "App da Web".
  *
- * As senhas ficam na aba "Config" da planilha e podem ser trocadas a qualquer momento.
+ * Para atualizar o código depois: cole a versão nova, salve e use
+ *   Implantar → Gerenciar implantações → lápis → Versão: Nova versão → Implantar.
+ *   Assim o link do App da Web continua o mesmo.
+ *
+ * Logins: cada pessoa tem uma linha na aba "Usuarios" (usuário, nome, senha, perfil, ativo).
+ * Na primeira vez que o sistema roda, a aba é criada sozinha com a administração e 3 funcionários.
  */
 
 const ABAS = {
@@ -63,11 +68,11 @@ function doPost(e) {
   try { req = JSON.parse(e.postData.contents); }
   catch (err) { return json({ ok: false, erro: 'Pedido inválido.' }); }
   try {
-    const papel = autenticar(req.senha);
-    if (!papel) return json({ ok: false, codigo: 'senha', erro: 'Senha incorreta.' });
-    const nome = texto(req.nome, 60) || 'Sem nome';
-    if (req.acao === 'entrar') return json({ ok: true, papel });
-    if (req.acao === 'dados') return json({ ok: true, papel, dados: dados(req.meses) });
+    const conta = autenticar(req.usuario, req.senha);
+    if (!conta) return json({ ok: false, codigo: 'senha', erro: 'Usuário ou senha incorretos.' });
+    const papel = conta.papel, nome = conta.nome;
+    if (req.acao === 'entrar') return json({ ok: true, papel, nome });
+    if (req.acao === 'dados') return json({ ok: true, papel, nome, dados: dados(req.meses) });
 
     const lock = LockService.getScriptLock();
     if (!lock.tryLock(20000)) throw falha('O sistema está ocupado com outro registro. Tente de novo em alguns segundos.');
@@ -85,7 +90,7 @@ function doPost(e) {
     } finally {
       lock.releaseLock();
     }
-    return json({ ok: true, papel, msg, dados: dados(req.meses) });
+    return json({ ok: true, papel, nome, msg, dados: dados(req.meses) });
   } catch (err) {
     return json({ ok: false, erro: err.paraUsuario ? err.message : 'Erro no servidor: ' + err.message });
   }
@@ -308,20 +313,96 @@ function gravar(t, obj, row) {
 
 // ---------- utilidades ----------
 
-function autenticar(senha) {
-  const sh = SpreadsheetApp.getActive().getSheetByName('Config');
-  if (!sh) throw falha('A aba "Config" não foi encontrada na planilha.');
-  let equipe = '', admin = '';
-  sh.getDataRange().getValues().forEach(r => {
-    const k = String(r[0]).trim().toLowerCase();
-    if (k === 'senha da equipe') equipe = String(r[1]).trim();
-    if (k === 'senha da administração' || k === 'senha da administracao') admin = String(r[1]).trim();
-  });
+const USUARIOS_CAB = ['Usuário', 'Nome', 'Senha', 'Perfil', 'Ativo'];
+
+function autenticar(usuario, senha) {
+  const u = String(usuario || '').trim().toLowerCase();
   const s = String(senha || '').trim();
-  if (!s) return null;
-  if (admin && s === admin) return 'admin';
-  if (equipe && s === equipe) return 'equipe';
+  if (!u || !s) return null;
+  const sh = abaUsuarios();
+  const vals = sh.getDataRange().getValues();
+  const head = vals[0].map(h => String(h).trim());
+  const c = {};
+  USUARIOS_CAB.forEach(label => {
+    c[label] = head.indexOf(label);
+    if (c[label] < 0) throw falha('A coluna "' + label + '" não foi encontrada na aba Usuarios.');
+  });
+  for (let i = 1; i < vals.length; i++) {
+    const r = vals[i];
+    if (String(r[c['Usuário']]).trim().toLowerCase() !== u) continue;
+    if (String(r[c['Ativo']]).trim().toLowerCase().indexOf('n') === 0) return null;
+    if (String(r[c['Senha']]).trim() !== s) return null;
+    const perfil = String(r[c['Perfil']]).trim().toLowerCase();
+    return {
+      papel: perfil.indexOf('admin') === 0 ? 'admin' : 'equipe',
+      nome: texto(r[c['Nome']], 60) || String(r[c['Usuário']]).trim()
+    };
+  }
   return null;
+}
+
+// Cria a aba "Usuarios" na primeira vez, com a administração e 3 funcionários.
+function abaUsuarios() {
+  const ss = SpreadsheetApp.getActive();
+  let sh = ss.getSheetByName('Usuarios');
+  if (sh) return sh;
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    sh = ss.getSheetByName('Usuarios');
+    if (sh) return sh;
+    // aproveita a senha de administração que já existia na aba Config
+    let senhaAdmin = '';
+    const cfg = ss.getSheetByName('Config');
+    if (cfg) {
+      cfg.getDataRange().getValues().forEach(r => {
+        const k = String(r[0]).trim().toLowerCase();
+        if (k === 'senha da administração' || k === 'senha da administracao') senhaAdmin = String(r[1]).trim();
+      });
+    }
+    sh = ss.insertSheet('Usuarios', 0);
+    const linhas = [
+      USUARIOS_CAB,
+      ['admin', 'Administração', senhaAdmin || senhaAleatoria(), 'Administração', 'Sim'],
+      ['funcionario1', 'Funcionário 1', senhaAleatoria(), 'Manutenção', 'Sim'],
+      ['funcionario2', 'Funcionário 2', senhaAleatoria(), 'Manutenção', 'Sim'],
+      ['funcionario3', 'Funcionário 3', senhaAleatoria(), 'Manutenção', 'Sim']
+    ];
+    const rng = sh.getRange(1, 1, linhas.length, USUARIOS_CAB.length);
+    rng.setNumberFormat('@');
+    rng.setValues(linhas);
+    sh.getRange(1, 1, 1, USUARIOS_CAB.length).setFontWeight('bold').setBackground('#1F2A37').setFontColor('#FFFFFF');
+    sh.setFrozenRows(1);
+    sh.setColumnWidths(1, 5, 150);
+    sh.getRange(linhas.length + 2, 1).setValue(
+      'Para criar um login, preencha uma linha nova. Perfil: Manutenção ou Administração. Para bloquear alguém, escreva Não em Ativo.'
+    ).setFontStyle('italic');
+    sh.getRange(2, 4, 50, 1).setDataValidation(
+      SpreadsheetApp.newDataValidation().requireValueInList(['Manutenção', 'Administração'], true).build()
+    );
+    sh.getRange(2, 5, 50, 1).setDataValidation(
+      SpreadsheetApp.newDataValidation().requireValueInList(['Sim', 'Não'], true).build()
+    );
+    // a senha compartilhada da equipe deixa de valer
+    if (cfg) {
+      const v = cfg.getDataRange().getValues();
+      for (let i = 0; i < v.length; i++) {
+        const k = String(v[i][0]).trim().toLowerCase();
+        if (k.indexOf('senha da') === 0) {
+          cfg.getRange(i + 1, 2).setValue('');
+          cfg.getRange(i + 1, 3).setValue('Não é mais usada. Os logins agora ficam na aba Usuarios.');
+        }
+      }
+    }
+    SpreadsheetApp.flush();
+    return sh;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function senhaAleatoria() {
+  return String(Math.floor(100000 + Math.random() * 900000));
 }
 
 function soAdmin(papel) {

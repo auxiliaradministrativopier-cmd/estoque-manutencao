@@ -24,21 +24,21 @@ const API = (window.ESTOQUE_API_URL || "").trim();
 
 // ---------- estado ----------
 const S = {
-  nome:"", senha:"", papel:"", itens:new Map(), emprestimos:[], movs:[],
+  usuario:"", nome:"", senha:"", papel:"", itens:new Map(), emprestimos:[], movs:[],
   tab:"painel", tipo:"saida", picked:null, iStatus:"", hTipo:"", histMes:mesDe(), ocupado:false, ultima:null
 };
 const isAdmin = () => S.papel === "admin";
 const movsDoMes = ym => S.movs.filter(m => String(m.data).slice(0,7) === ym);
 
 // ---------- sessão salva no aparelho ----------
-const guardar = () => { try { localStorage.setItem("estoque-sessao", JSON.stringify({nome:S.nome, senha:S.senha})); } catch(e){} };
+const guardar = () => { try { localStorage.setItem("estoque-sessao", JSON.stringify({usuario:S.usuario, senha:S.senha})); } catch(e){} };
 const lerSessao = () => { try { return JSON.parse(localStorage.getItem("estoque-sessao")||"null"); } catch(e){ return null; } };
 const apagarSessao = () => { try { localStorage.removeItem("estoque-sessao"); } catch(e){} };
 
 // ---------- comunicação com a planilha ----------
 async function api(acao, extra){
   if (!API) throw {paraUsuario:true, message:"O endereço da planilha ainda não foi configurado (arquivo config.js)."};
-  const corpo = Object.assign({acao, senha:S.senha, nome:S.nome, meses:[...new Set([mesDe(), S.histMes])]}, extra||{});
+  const corpo = Object.assign({acao, usuario:S.usuario, senha:S.senha, meses:[...new Set([mesDe(), S.histMes])]}, extra||{});
   let r;
   try {
     const resp = await fetch(API, {method:"POST", body:JSON.stringify(corpo), redirect:"follow"});
@@ -51,6 +51,7 @@ async function api(acao, extra){
     throw {paraUsuario:true, message:r.erro || "Não foi possível concluir."};
   }
   if (r.papel) S.papel = r.papel;
+  if (r.nome) S.nome = r.nome;
   if (r.dados) aplicar(r.dados);
   return r;
 }
@@ -85,19 +86,19 @@ function renderNotices(){
 // ---------- entrada ----------
 function mostrarLogin(msg){
   $("#login").hidden = false;
-  $("#l-nome").value = S.nome || "";
+  $("#l-usuario").value = S.usuario || "";
   $("#l-senha").value = "";
   $("#l-msg").textContent = msg || ""; $("#l-msg").className = msg ? "hint err" : "hint";
-  ($("#l-nome").value ? $("#l-senha") : $("#l-nome")).focus();
+  ($("#l-usuario").value ? $("#l-senha") : $("#l-usuario")).focus();
 }
 function sair(msg){ S.senha = ""; S.papel = ""; apagarSessao(); mostrarLogin(msg); }
 $("#f-login").addEventListener("submit", async ev => {
   ev.preventDefault();
-  const nome = $("#l-nome").value.trim(), senha = $("#l-senha").value.trim(), msg = $("#l-msg");
-  if (!nome) { msg.textContent = "Informe seu nome."; msg.className = "hint err"; return; }
+  const usuario = $("#l-usuario").value.trim().toLowerCase(), senha = $("#l-senha").value.trim(), msg = $("#l-msg");
+  if (!usuario) { msg.textContent = "Informe seu usuário."; msg.className = "hint err"; return; }
   if (!senha) { msg.textContent = "Informe a senha."; msg.className = "hint err"; return; }
   const btn = $("#l-entrar"); btn.disabled = true; msg.className = "hint"; msg.textContent = "Entrando…";
-  S.nome = nome; S.senha = senha;
+  S.usuario = usuario; S.senha = senha;
   try {
     await api("entrar");
     guardar(); $("#login").hidden = true; renderMe(); atualizar();
@@ -523,8 +524,8 @@ renderNotices();
 const ini = (location.hash||"").slice(1);
 if (["painel","registrar","itens","historico","emprestimos"].includes(ini)) setTab(ini); else renderAll();
 const sess = lerSessao();
-if (sess && sess.senha) {
-  S.nome = sess.nome || ""; S.senha = sess.senha;
+if (sess && sess.senha && sess.usuario) {
+  S.usuario = sess.usuario || ""; S.senha = sess.senha;
   api("entrar").then(() => { renderMe(); atualizar(); }).catch(e => { S.senha = ""; mostrarLogin(e.message); });
 } else {
   mostrarLogin("");
