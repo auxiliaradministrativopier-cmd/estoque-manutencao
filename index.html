@@ -52,6 +52,8 @@
     <button role="tab" data-tab="itens" aria-selected="false">Itens <span class="badge" id="b-itens">0</span></button>
     <button role="tab" data-tab="historico" aria-selected="false">Histórico</button>
     <button role="tab" data-tab="emprestimos" aria-selected="false">Empréstimos <span class="badge" id="b-emp">0</span></button>
+    <button role="tab" data-tab="dashboard" aria-selected="false">Dashboard</button>
+    <button role="tab" data-tab="usuarios" aria-selected="false">Usuários</button>
   </div>
 </nav>
 
@@ -223,6 +225,68 @@
     </table></div>
   </section>
 
+
+  <!-- DASHBOARD -->
+  <section id="t-dashboard" class="stack" hidden>
+    <div class="sec-head"><h2 class="sec">Dashboard da administração</h2><span class="muted" id="d-resumo"></span></div>
+    <div class="toolbar dash-filtros">
+      <div class="chips" id="d-presets" role="group" aria-label="Período">
+        <button class="chip" data-p="mes" aria-pressed="true">Este mês</button>
+        <button class="chip" data-p="mesPassado" aria-pressed="false">Mês passado</button>
+        <button class="chip" data-p="3m" aria-pressed="false">Últimos 3 meses</button>
+        <button class="chip" data-p="6m" aria-pressed="false">Últimos 6 meses</button>
+        <button class="chip" data-p="ano" aria-pressed="false">Este ano</button>
+        <button class="chip" data-p="pers" aria-pressed="false">Escolher datas</button>
+      </div>
+      <div class="actions" id="d-pers" hidden>
+        <label class="hint" for="d-de">De</label><input class="input" type="date" id="d-de" style="width:auto">
+        <label class="hint" for="d-ate">até</label><input class="input" type="date" id="d-ate" style="width:auto">
+      </div>
+    </div>
+    <div class="kpis kpis6" id="d-kpis"></div>
+    <div class="panel">
+      <div class="sec-head" style="margin-bottom:6px"><h3 id="d-meses-tit">Retiradas e entradas por mês</h3>
+        <div class="legend"><span><i class="sw" style="background:var(--s1)"></i>Retiradas (saídas e trocas)</span><span><i class="sw" style="background:var(--s2)"></i>Entradas</span></div></div>
+      <div id="d-meses" class="chart"></div>
+    </div>
+    <div class="grid-dash">
+      <div class="panel"><h3>Itens mais retirados</h3><p class="cap">Unidades que saíram, somando saídas e trocas</p><div id="d-itens" class="hbars"></div></div>
+      <div class="panel"><h3>Para onde os itens foram</h3><p class="cap">Retiradas por setor, local ou equipamento</p><div id="d-destinos" class="hbars"></div></div>
+      <div class="panel"><h3>Retiradas por colaborador</h3><p class="cap">Quem retirou ou pegou emprestado</p><div id="d-colab" class="hbars"></div></div>
+      <div class="panel"><h3>Consumo por categoria</h3><p class="cap">Unidades retiradas em cada categoria</p><div id="d-cat" class="hbars"></div></div>
+      <div class="panel"><h3>Compras por fornecedor</h3><p class="cap">Valor das entradas com preço informado</p><div id="d-forn" class="hbars"></div></div>
+      <div class="panel"><h3>Peças retiradas nas trocas</h3><p class="cap">O que foi feito com a peça velha</p><div id="d-trocas" class="hbars"></div></div>
+      <div class="panel"><h3>Lançamentos por usuário</h3><p class="cap">Quem registrou as movimentações no sistema</p><div id="d-usuarios" class="hbars"></div></div>
+      <div class="panel"><h3>Empréstimos em aberto</h3><p class="cap">Ferramentas fora do almoxarifado agora</p>
+        <div class="tablebox flat"><table><thead><tr><th>Ferramenta</th><th>Com quem</th><th class="n">Fora há</th><th>Devolver até</th></tr></thead><tbody id="d-emp"></tbody></table></div></div>
+    </div>
+    <div class="grid2">
+      <div class="panel"><h3>Estoque crítico</h3><p class="cap">Itens zerados ou abaixo do mínimo hoje</p>
+        <div class="tablebox flat"><table><thead><tr><th>Item</th><th class="n">Estoque / mín.</th><th>Situação</th></tr></thead><tbody id="d-crit"></tbody></table></div></div>
+      <div class="panel"><h3>Itens parados</h3><p class="cap">Com estoque e sem nenhum movimento no período</p>
+        <div class="tablebox flat"><table><thead><tr><th>Item</th><th class="n">Estoque</th><th>Último movimento</th></tr></thead><tbody id="d-parados"></tbody></table></div></div>
+    </div>
+    <div class="panel">
+      <div class="sec-head" style="margin-bottom:6px"><h3>Consumo detalhado por item</h3><button class="btn small" id="d-csv" hidden>Exportar planilha (CSV)</button></div>
+      <p class="cap">Todos os itens que tiveram movimento no período, do mais retirado para o menos retirado</p>
+      <div class="tablebox flat"><table><thead><tr><th>Código</th><th>Item</th><th class="n">Saídas</th><th class="n">Trocas</th><th class="n">Empréstimos</th><th class="n">Entradas</th><th class="n">Compras</th><th class="n">Estoque hoje</th></tr></thead><tbody id="d-det"></tbody></table></div>
+      <button class="link" id="d-mais" type="button" hidden style="margin-top:10px"></button>
+    </div>
+  </section>
+
+  <!-- USUÁRIOS -->
+  <section id="t-usuarios" class="stack" hidden>
+    <div class="sec-head"><h2 class="sec">Usuários e permissões</h2><span class="muted">Quem entra no sistema e o que cada perfil pode fazer.</span></div>
+    <div class="panel">
+      <div class="sec-head" style="margin-bottom:10px"><h3>Colaboradores</h3><button class="btn primary small" id="q-novo-u">Novo colaborador</button></div>
+      <div class="tablebox flat"><table><thead><tr><th>Nome</th><th>Usuário</th><th>Perfil</th><th>Situação</th><th class="hide-s">Senha</th><th></th></tr></thead><tbody id="q-usuarios"></tbody></table></div>
+    </div>
+    <div class="panel">
+      <div class="sec-head" style="margin-bottom:10px"><h3>Perfis e permissões</h3><button class="btn small" id="q-novo-p">Novo perfil</button></div>
+      <p class="cap">Cada colaborador recebe um perfil. O perfil Administração sempre tem acesso a tudo.</p>
+      <div class="tablebox flat"><table class="matriz" id="q-matriz"></table></div>
+    </div>
+  </section>
 </main>
 
 <div class="overlay" id="modal" hidden><div class="modal" role="dialog" aria-modal="true" id="modal-box"></div></div>

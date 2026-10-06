@@ -70,27 +70,35 @@ function doPost(e) {
   try {
     const conta = autenticar(req.usuario, req.senha);
     if (!conta) return json({ ok: false, codigo: 'senha', erro: 'Usuário ou senha incorretos.' });
-    const papel = conta.papel, nome = conta.nome;
-    if (req.acao === 'entrar') return json({ ok: true, papel, nome });
-    if (req.acao === 'dados') return json({ ok: true, papel, nome, dados: dados(req.meses) });
+    const nome = conta.nome;
+    const base = { ok: true, nome, perfil: conta.perfil, perms: conta.perms };
+    const pode = p => { if (!conta.perms[p]) throw falha('Seu perfil não tem permissão para isso.'); };
+    if (req.acao === 'entrar') return json(base);
+    if (req.acao === 'dados') return json(Object.assign(base, { dados: dados(req.meses) }));
+    if (req.acao === 'relatorio') { pode('dashboard'); return json(Object.assign(base, { relatorio: relatorio(req.de, req.ate) })); }
+    if (req.acao === 'usuarios') { pode('usuarios'); return json(Object.assign(base, { equipe: equipe() })); }
 
     const lock = LockService.getScriptLock();
     if (!lock.tryLock(20000)) throw falha('O sistema está ocupado com outro registro. Tente de novo em alguns segundos.');
-    let msg;
+    let msg, extra = {};
     try {
       switch (req.acao) {
-        case 'registrar': msg = registrar(req.mov || {}, nome); break;
-        case 'devolver': msg = devolver(req, nome); break;
-        case 'salvarItem': msg = salvarItem(req, nome, papel); break;
-        case 'excluirItem': soAdmin(papel); msg = excluirItem(req.id); break;
-        case 'estornar': soAdmin(papel); msg = estornar(req, nome); break;
+        case 'registrar': pode('registrar_' + String((req.mov || {}).tipo)); msg = registrar(req.mov || {}, nome); break;
+        case 'devolver': pode('devolver'); msg = devolver(req, nome); break;
+        case 'salvarItem': pode((req.item || {}).id ? 'itens_editar' : 'itens_cadastrar'); msg = salvarItem(req, nome); break;
+        case 'excluirItem': pode('itens_editar'); msg = excluirItem(req.id); break;
+        case 'estornar': pode('historico_estornar'); msg = estornar(req, nome); break;
+        case 'salvarUsuario': pode('usuarios'); msg = salvarUsuario(req, conta); extra.equipe = equipe(); break;
+        case 'salvarPerfil': pode('usuarios'); msg = salvarPerfil(req); extra.equipe = equipe(); break;
+        case 'excluirPerfil': pode('usuarios'); msg = excluirPerfil(req.nome); extra.equipe = equipe(); break;
         default: throw falha('Ação desconhecida.');
       }
       SpreadsheetApp.flush();
     } finally {
       lock.releaseLock();
     }
-    return json({ ok: true, papel, nome, msg, dados: dados(req.meses) });
+    if (extra.equipe) return json(Object.assign(base, { msg }, extra));
+    return json(Object.assign(base, { msg, dados: dados(req.meses) }));
   } catch (err) {
     return json({ ok: false, erro: err.paraUsuario ? err.message : 'Erro no servidor: ' + err.message });
   }
@@ -159,7 +167,7 @@ function devolver(r, nome) {
   return perdida ? 'Perda registrada.' : 'Devolução registrada.';
 }
 
-function salvarItem(r, nome, papel) {
+function salvarItem(r, nome) {
   const v = r.item || {};
   const ti = tabela('itens');
   const todos = linhas(ti);
@@ -189,7 +197,6 @@ function salvarItem(r, nome, papel) {
     return 'Item cadastrado: ' + nomeItem + '.';
   }
 
-  soAdmin(papel);
   const it = todos.find(x => x.id === v.id);
   if (!it) throw falha('Item não encontrado. Atualize a página.');
   const atual = Number(it.qtd) || 0;
@@ -313,12 +320,41 @@ function gravar(t, obj, row) {
 
 // ---------- utilidades ----------
 
+// ---------- usuários, perfis e permissões ----------
+
 const USUARIOS_CAB = ['Usuário', 'Nome', 'Senha', 'Perfil', 'Ativo'];
+const PERFIL_TOTAL = 'Administração';
+// [chave, título da coluna na aba Perfis, descrição, grupo]
+const PERMISSOES = [
+  ['painel', 'Ver painel', 'Ver o painel inicial', 'Consulta'],
+  ['itens_ver', 'Ver itens', 'Ver a lista de itens e o estoque', 'Consulta'],
+  ['historico_ver', 'Ver histórico', 'Ver o histórico de movimentações', 'Consulta'],
+  ['dashboard', 'Ver dashboard', 'Ver o dashboard da administração', 'Consulta'],
+  ['registrar_saida', 'Saída', 'Registrar saídas', 'Movimentações'],
+  ['registrar_entrada', 'Entrada', 'Registrar entradas e compras', 'Movimentações'],
+  ['registrar_troca', 'Troca', 'Registrar trocas de peças', 'Movimentações'],
+  ['registrar_emprestimo', 'Empréstimo', 'Emprestar ferramentas', 'Movimentações'],
+  ['devolver', 'Devolução', 'Registrar devoluções de empréstimos', 'Movimentações'],
+  ['itens_cadastrar', 'Cadastrar itens', 'Cadastrar itens novos', 'Cadastro'],
+  ['itens_editar', 'Editar itens', 'Editar, ajustar estoque e excluir itens', 'Cadastro'],
+  ['historico_estornar', 'Estornar', 'Estornar lançamentos', 'Controle'],
+  ['exportar', 'Exportar', 'Exportar planilhas', 'Controle'],
+  ['usuarios', 'Usuários', 'Gerenciar usuários e permissões', 'Controle']
+];
+const PADRAO_MANUTENCAO = ['painel', 'itens_ver', 'historico_ver', 'registrar_saida', 'registrar_entrada',
+  'registrar_troca', 'registrar_emprestimo', 'devolver', 'itens_cadastrar'];
 
 function autenticar(usuario, senha) {
   const u = String(usuario || '').trim().toLowerCase();
   const s = String(senha || '').trim();
   if (!u || !s) return null;
+  const us = lerUsuarios().lista.find(x => x.usuario === u);
+  if (!us || !us.ativo || us.senha !== s) return null;
+  const perms = lerPerfis()[us.perfil] || {};
+  return { usuario: us.usuario, nome: us.nome || us.usuario, perfil: us.perfil, perms };
+}
+
+function lerUsuarios() {
   const sh = abaUsuarios();
   const vals = sh.getDataRange().getValues();
   const head = vals[0].map(h => String(h).trim());
@@ -327,18 +363,187 @@ function autenticar(usuario, senha) {
     c[label] = head.indexOf(label);
     if (c[label] < 0) throw falha('A coluna "' + label + '" não foi encontrada na aba Usuarios.');
   });
+  const lista = [];
   for (let i = 1; i < vals.length; i++) {
     const r = vals[i];
-    if (String(r[c['Usuário']]).trim().toLowerCase() !== u) continue;
-    if (String(r[c['Ativo']]).trim().toLowerCase().indexOf('n') === 0) return null;
-    if (String(r[c['Senha']]).trim() !== s) return null;
-    const perfil = String(r[c['Perfil']]).trim().toLowerCase();
-    return {
-      papel: perfil.indexOf('admin') === 0 ? 'admin' : 'equipe',
-      nome: texto(r[c['Nome']], 60) || String(r[c['Usuário']]).trim()
-    };
+    const usuario = String(r[c['Usuário']]).trim().toLowerCase();
+    if (!/^[a-z0-9._@-]{2,40}$/.test(usuario)) continue;
+    lista.push({
+      row: i + 1, usuario, nome: texto(r[c['Nome']], 60), senha: String(r[c['Senha']]).trim(),
+      perfil: String(r[c['Perfil']]).trim(), ativo: String(r[c['Ativo']]).trim().toLowerCase().indexOf('n') !== 0
+    });
   }
-  return null;
+  return { sh, c, lista, ncol: head.length };
+}
+
+function lerPerfis() {
+  const sh = abaPerfis();
+  const vals = sh.getDataRange().getValues();
+  const head = vals[0].map(h => String(h).trim());
+  const out = {};
+  for (let i = 1; i < vals.length; i++) {
+    const nome = String(vals[i][0]).trim();
+    if (!linhaDePerfil(vals[i], head)) continue;
+    const perms = {};
+    PERMISSOES.forEach(([k, label]) => {
+      const j = head.indexOf(label);
+      perms[k] = nome === PERFIL_TOTAL ? true : (j >= 0 && String(vals[i][j]).trim().toLowerCase().indexOf('s') === 0);
+    });
+    out[nome] = perms;
+  }
+  if (!out[PERFIL_TOTAL]) out[PERFIL_TOTAL] = PERMISSOES.reduce((m, p) => { m[p[0]] = true; return m; }, {});
+  return out;
+}
+
+function equipe() {
+  const perfis = lerPerfis();
+  return {
+    usuarios: lerUsuarios().lista.map(u => ({ usuario: u.usuario, nome: u.nome, senha: u.senha, perfil: u.perfil, ativo: u.ativo })),
+    perfis: Object.keys(perfis).map(n => ({ nome: n, perms: perfis[n], fixo: n === PERFIL_TOTAL })),
+    permissoes: PERMISSOES.map(([chave, coluna, descricao, grupo]) => ({ chave, descricao, grupo }))
+  };
+}
+
+function salvarUsuario(r, conta) {
+  const v = r.u || {};
+  const original = String(r.original || '').trim().toLowerCase();
+  const usuario = String(v.usuario || '').trim().toLowerCase();
+  if (!/^[a-z0-9._@-]{2,40}$/.test(usuario)) throw falha('Usuário inválido: use letras minúsculas, números, ponto ou traço, sem espaços.');
+  const nome = texto(v.nome, 60);
+  if (!nome) throw falha('Informe o nome do colaborador.');
+  const senha = String(v.senha || '').trim();
+  if (senha.length < 4) throw falha('A senha precisa ter pelo menos 4 caracteres.');
+  const perfis = lerPerfis();
+  const perfil = String(v.perfil || '').trim();
+  if (!perfis[perfil]) throw falha('Perfil não encontrado.');
+  const ativo = v.ativo !== false;
+  const U = lerUsuarios();
+  const outro = U.lista.find(x => x.usuario === usuario && x.usuario !== original);
+  if (outro) throw falha('O usuário "' + usuario + '" já existe.');
+  if (original && original === conta.usuario) {
+    if (!ativo) throw falha('Você não pode desativar o seu próprio login.');
+    if (!perfis[perfil].usuarios) throw falha('Você não pode tirar de si mesmo o acesso a usuários e permissões.');
+  }
+  const linha = [];
+  linha[U.c['Usuário']] = usuario; linha[U.c['Nome']] = nome; linha[U.c['Senha']] = senha;
+  linha[U.c['Perfil']] = perfil; linha[U.c['Ativo']] = ativo ? 'Sim' : 'Não';
+  let row;
+  if (original) {
+    const atual = U.lista.find(x => x.usuario === original);
+    if (!atual) throw falha('Usuário não encontrado. Atualize a página.');
+    row = atual.row;
+  } else {
+    const ultima = U.lista.length ? Math.max.apply(null, U.lista.map(x => x.row)) : 1;
+    U.sh.insertRowAfter(ultima);
+    row = ultima + 1;
+  }
+  const rng = U.sh.getRange(row, 1, 1, U.ncol);
+  const vals = rng.getValues();
+  linha.forEach((x, i) => { if (x !== undefined) vals[0][i] = x; });
+  rng.setNumberFormat('@');
+  rng.setValues(vals);
+  return original ? 'Usuário atualizado: ' + nome + '.' : 'Usuário criado: ' + nome + '.';
+}
+
+function salvarPerfil(r) {
+  const nome = texto(r.nome, 40);
+  const original = texto(r.original, 40);
+  if (!nome) throw falha('Informe o nome do perfil.');
+  if (nome === PERFIL_TOTAL || original === PERFIL_TOTAL) throw falha('O perfil Administração tem acesso total e não pode ser alterado.');
+  const sh = abaPerfis();
+  const vals = sh.getDataRange().getValues();
+  const head = vals[0].map(h => String(h).trim());
+  let row = 0, ultima = 1;
+  for (let i = 1; i < vals.length; i++) {
+    if (!linhaDePerfil(vals[i], head)) continue;
+    ultima = i + 1;
+    const n = String(vals[i][0]).trim();
+    if (n === nome && n !== original) throw falha('Já existe um perfil chamado "' + nome + '".');
+    if (original && n === original) row = i + 1;
+  }
+  if (original && !row) throw falha('Perfil não encontrado. Atualize a página.');
+  if (!row) { sh.insertRowAfter(ultima); row = ultima + 1; }
+  const linha = head.map((h, j) => {
+    if (j === 0) return nome;
+    const p = PERMISSOES.find(x => x[1] === h);
+    if (!p) return original ? vals[row - 1][j] : '';
+    return r.perms && r.perms[p[0]] ? 'Sim' : 'Não';
+  });
+  const rng = sh.getRange(row, 1, 1, head.length);
+  rng.setNumberFormat('@');
+  rng.setValues([linha]);
+  if (original && original !== nome) {
+    const U = lerUsuarios();
+    U.lista.filter(u => u.perfil === original).forEach(u => U.sh.getRange(u.row, U.c['Perfil'] + 1).setValue(nome));
+  }
+  validacaoPerfis();
+  return original ? 'Perfil atualizado: ' + nome + '.' : 'Perfil criado: ' + nome + '.';
+}
+
+function excluirPerfil(nome) {
+  nome = texto(nome, 40);
+  if (nome === PERFIL_TOTAL) throw falha('O perfil Administração não pode ser excluído.');
+  const emUso = lerUsuarios().lista.filter(u => u.perfil === nome);
+  if (emUso.length) throw falha('Este perfil ainda é usado por ' + emUso.map(u => u.nome || u.usuario).join(', ') + '. Troque o perfil dessas pessoas antes.');
+  const sh = abaPerfis();
+  const vals = sh.getDataRange().getValues();
+  for (let i = 1; i < vals.length; i++) {
+    if (String(vals[i][0]).trim() === nome) { sh.deleteRow(i + 1); validacaoPerfis(); return 'Perfil excluído.'; }
+  }
+  throw falha('Perfil não encontrado.');
+}
+
+// uma linha da aba Perfis só conta se tiver nome e alguma permissão marcada como Sim ou Não
+function linhaDePerfil(r, head) {
+  const nome = String(r[0]).trim();
+  if (!nome || nome.length > 40) return false;
+  return PERMISSOES.some(p => { const j = head.indexOf(p[1]); return j >= 0 && /^(sim|não|nao)$/i.test(String(r[j]).trim()); });
+}
+
+// mantém a lista de perfis da aba Usuarios igual à aba Perfis
+function validacaoPerfis() {
+  const U = lerUsuarios();
+  const nomes = Object.keys(lerPerfis());
+  U.sh.getRange(2, U.c['Perfil'] + 1, Math.max(50, U.sh.getLastRow()), 1).setDataValidation(
+    SpreadsheetApp.newDataValidation().requireValueInList(nomes, true).build()
+  );
+}
+
+// Cria a aba "Perfis" na primeira vez: Administração (acesso total) e Manutenção.
+function abaPerfis() {
+  const ss = SpreadsheetApp.getActive();
+  let sh = ss.getSheetByName('Perfis');
+  if (sh) return sh;
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    sh = ss.getSheetByName('Perfis');
+    if (sh) return sh;
+    sh = ss.insertSheet('Perfis', 1);
+    const head = ['Perfil'].concat(PERMISSOES.map(p => p[1]));
+    const linhas = [
+      head,
+      [PERFIL_TOTAL].concat(PERMISSOES.map(() => 'Sim')),
+      ['Manutenção'].concat(PERMISSOES.map(p => PADRAO_MANUTENCAO.indexOf(p[0]) >= 0 ? 'Sim' : 'Não'))
+    ];
+    const rng = sh.getRange(1, 1, linhas.length, head.length);
+    rng.setNumberFormat('@');
+    rng.setValues(linhas);
+    sh.getRange(1, 1, 1, head.length).setFontWeight('bold').setBackground('#1F2A37').setFontColor('#FFFFFF');
+    sh.setFrozenRows(1);
+    sh.setFrozenColumns(1);
+    sh.setColumnWidth(1, 160);
+    sh.getRange(2, 2, 50, PERMISSOES.length).setDataValidation(
+      SpreadsheetApp.newDataValidation().requireValueInList(['Sim', 'Não'], true).build()
+    );
+    sh.getRange(linhas.length + 2, 1).setValue(
+      'O perfil Administração sempre tem acesso total. Os outros perfis podem ser ajustados aqui ou no site, em Usuários.'
+    ).setFontStyle('italic');
+    SpreadsheetApp.flush();
+    return sh;
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // Cria a aba "Usuarios" na primeira vez, com a administração e 3 funcionários.
@@ -351,7 +556,6 @@ function abaUsuarios() {
   try {
     sh = ss.getSheetByName('Usuarios');
     if (sh) return sh;
-    // aproveita a senha de administração que já existia na aba Config
     let senhaAdmin = '';
     const cfg = ss.getSheetByName('Config');
     if (cfg) {
@@ -363,7 +567,7 @@ function abaUsuarios() {
     sh = ss.insertSheet('Usuarios', 0);
     const linhas = [
       USUARIOS_CAB,
-      ['admin', 'Administração', senhaAdmin || senhaAleatoria(), 'Administração', 'Sim'],
+      ['admin', 'Administração', senhaAdmin || senhaAleatoria(), PERFIL_TOTAL, 'Sim'],
       ['funcionario1', 'Funcionário 1', senhaAleatoria(), 'Manutenção', 'Sim'],
       ['funcionario2', 'Funcionário 2', senhaAleatoria(), 'Manutenção', 'Sim'],
       ['funcionario3', 'Funcionário 3', senhaAleatoria(), 'Manutenção', 'Sim']
@@ -375,15 +579,11 @@ function abaUsuarios() {
     sh.setFrozenRows(1);
     sh.setColumnWidths(1, 5, 150);
     sh.getRange(linhas.length + 2, 1).setValue(
-      'Para criar um login, preencha uma linha nova. Perfil: Manutenção ou Administração. Para bloquear alguém, escreva Não em Ativo.'
+      'Os logins podem ser criados e editados no site, em Usuários, ou aqui mesmo. Para bloquear alguém, escreva Não em Ativo.'
     ).setFontStyle('italic');
-    sh.getRange(2, 4, 50, 1).setDataValidation(
-      SpreadsheetApp.newDataValidation().requireValueInList(['Manutenção', 'Administração'], true).build()
-    );
     sh.getRange(2, 5, 50, 1).setDataValidation(
       SpreadsheetApp.newDataValidation().requireValueInList(['Sim', 'Não'], true).build()
     );
-    // a senha compartilhada da equipe deixa de valer
     if (cfg) {
       const v = cfg.getDataRange().getValues();
       for (let i = 0; i < v.length; i++) {
@@ -405,8 +605,30 @@ function senhaAleatoria() {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 
-function soAdmin(papel) {
-  if (papel !== 'admin') throw falha('Só a administração pode fazer isso.');
+// ---------- relatório para o dashboard ----------
+
+function relatorio(de, ate) {
+  const ok = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
+  if (!ok(de) || !ok(ate)) throw falha('Período inválido.');
+  if (de > ate) { const t = de; de = ate; ate = t; }
+  const limpa = o => { const c = Object.assign({}, o); delete c._row; return c; };
+  const todas = linhas(tabela('movs'));
+  const ultimo = {}, preco = {};
+  todas.forEach(m => {
+    if (m.estornado || m.tipo === 'estorno') return;
+    if (!ultimo[m.itemId] || m.data > ultimo[m.itemId]) ultimo[m.itemId] = m.data;
+    if (m.tipo === 'entrada' && m.valorUnit !== '' && Number(m.valorUnit) > 0) {
+      if (!preco[m.itemId] || m.data >= preco[m.itemId].data) preco[m.itemId] = { data: m.data, valor: Number(m.valorUnit) };
+    }
+  });
+  Object.keys(preco).forEach(k => { preco[k] = preco[k].valor; });
+  return {
+    de, ate,
+    movs: todas.filter(m => m.data >= de && m.data <= ate).map(limpa),
+    itens: linhas(tabela('itens')).map(limpa),
+    emprestimos: linhas(tabela('emp')).map(limpa),
+    ultimo, preco
+  };
 }
 
 function celula(v, isNum) {

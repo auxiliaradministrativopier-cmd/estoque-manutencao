@@ -14,13 +14,18 @@ Sistema para controlar os itens do setor de manutenção: entradas (compras), sa
 | `config.js` | Endereço do Apps Script (link do App da Web, termina em `/exec`) |
 | `apps-script/Codigo.gs` | Código que lê e grava na planilha |
 
-## Logins
+## Usuários e permissões
 
-Cada pessoa tem uma linha na aba **Usuarios** da planilha: usuário, nome, senha, perfil (Manutenção ou Administração) e ativo (Sim ou Não). O nome dessa aba é o que aparece em "Registrado por" no histórico.
+Os logins e perfis são gerenciados no próprio site, na aba **Usuários** (só aparece para quem tem essa permissão). Também ficam visíveis na planilha:
 
-- **Manutenção:** registra movimentações e cadastra itens.
-- **Administração:** também edita itens, ajusta estoque, estorna lançamentos e exporta o histórico.
-- Para bloquear alguém, escreva **Não** na coluna Ativo.
+- **Aba Usuarios:** usuário, nome do colaborador, senha, perfil e se está ativo. O nome é o que aparece em "Registrado por" no histórico.
+- **Aba Perfis:** o que cada perfil pode fazer (Sim ou Não em cada permissão). O perfil **Administração** sempre tem acesso total.
+
+O servidor confere a permissão em cada ação, então esconder um botão não é a única proteção.
+
+## Dashboard
+
+A aba **Dashboard** mostra, para o período escolhido: retiradas, compras, empréstimos, estoque crítico, valor estimado do estoque (pelo último preço de compra de cada item), itens parados, gráficos por dia ou mês, itens mais retirados, destinos, colaboradores, categorias, fornecedores, trocas e o consumo detalhado por item, com exportação em CSV.
 
 Os dados do estoque e as senhas não ficam neste repositório, só na planilha.
 
