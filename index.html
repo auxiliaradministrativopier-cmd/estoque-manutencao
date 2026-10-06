@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Estoque da Manutenção</title>
+<meta name="theme-color" content="#18202a">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23f0ad1c'/%3E%3Cpath d='M8 12h16v12H8z' fill='%2318202a'/%3E%3Cpath d='M12 12V9h8v3' stroke='%2318202a' stroke-width='2' fill='none'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@500&family=Public+Sans:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="estilo.css">
+</head>
+<body>
+<div class="login" id="login" hidden>
+  <form class="card" id="f-login" novalidate autocomplete="on">
+    <div class="stripe" aria-hidden="true"></div>
+    <div class="inner">
+      <h2>Estoque da Manutenção</h2>
+      <p>Entre com seu nome e a senha do setor.</p>
+      <div class="field"><label for="l-nome">Seu nome</label><input class="input" id="l-nome" autocomplete="name" placeholder="Como você quer aparecer no histórico"></div>
+      <div class="field"><label for="l-senha">Senha</label><input class="input" id="l-senha" type="password" autocomplete="current-password"></div>
+      <div class="actions"><button class="btn primary" type="submit" id="l-entrar">Entrar</button><span class="hint" id="l-msg"></span></div>
+    </div>
+  </form>
+</div>
+<div class="stripe" aria-hidden="true"></div>
+<header class="top">
+  <div class="wrap">
+    <div class="brand">
+      <h1>Estoque da Manutenção</h1>
+      <p>Materiais, ferramentas e peças · entradas, saídas, trocas e empréstimos</p>
+    </div>
+    <div class="me" id="me"></div>
+  </div>
+</header>
+<nav class="tabs" aria-label="Seções">
+  <div class="wrap" role="tablist">
+    <button role="tab" data-tab="painel" aria-selected="true">Painel</button>
+    <button role="tab" data-tab="registrar" aria-selected="false">Registrar</button>
+    <button role="tab" data-tab="itens" aria-selected="false">Itens <span class="badge" id="b-itens">0</span></button>
+    <button role="tab" data-tab="historico" aria-selected="false">Histórico</button>
+    <button role="tab" data-tab="emprestimos" aria-selected="false">Empréstimos <span class="badge" id="b-emp">0</span></button>
+  </div>
+</nav>
+
+<main class="wrap">
+  <div id="notices"></div>
+
+  <!-- PAINEL -->
+  <section id="t-painel" class="stack">
+    <div class="kpis">
+      <button class="kpi" data-go="itens"><span class="lbl">Itens cadastrados</span><span class="val num" id="k-itens">0</span><span class="sub" id="k-itens-sub">nenhum item ainda</span></button>
+      <button class="kpi" id="k-baixo-box" data-go="itens" data-filter="baixo"><span class="lbl">Abaixo do mínimo</span><span class="val num" id="k-baixo">0</span><span class="sub" id="k-baixo-sub">tudo em ordem</span></button>
+      <button class="kpi" id="k-emp-box" data-go="emprestimos"><span class="lbl">Empréstimos abertos</span><span class="val num" id="k-emp">0</span><span class="sub" id="k-emp-sub">nenhum atrasado</span></button>
+      <button class="kpi" data-go="historico"><span class="lbl">Saídas no mês</span><span class="val num" id="k-saidas">0</span><span class="sub" id="k-saidas-sub">retiradas e trocas</span></button>
+    </div>
+    <div class="grid2">
+      <div class="panel">
+        <h3>Últimas movimentações</h3>
+        <div class="rows" id="p-ultimas"></div>
+      </div>
+      <div class="stack">
+        <div class="panel">
+          <h3>Precisa comprar</h3>
+          <div class="rows" id="p-comprar"></div>
+        </div>
+        <div class="panel">
+          <h3>Para onde os itens foram no mês</h3>
+          <div class="bars" id="p-destinos"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- REGISTRAR -->
+  <section id="t-registrar" hidden>
+    <div class="sec-head"><h2 class="sec">Registrar movimentação</h2><span class="muted">O estoque do item é atualizado na hora.</span></div>
+    <div class="seg" id="seg">
+      <button data-tipo="saida" aria-pressed="true"><b>Saída</b><span>Item retirado para uso</span></button>
+      <button data-tipo="entrada" aria-pressed="false"><b>Entrada</b><span>Compra ou recebimento</span></button>
+      <button data-tipo="troca" aria-pressed="false"><b>Troca</b><span>Peça nova no lugar da velha</span></button>
+      <button data-tipo="emprestimo" aria-pressed="false"><b>Empréstimo</b><span>Ferramenta que volta</span></button>
+    </div>
+    <form class="panel form" id="f-mov" autocomplete="off" novalidate>
+      <div class="field full">
+        <label for="m-busca">Item <span class="req">*</span></label>
+        <div class="combo">
+          <input class="input" id="m-busca" placeholder="Busque pelo nome ou código" role="combobox" aria-expanded="false" aria-controls="m-lista">
+          <div class="combo-list" id="m-lista" role="listbox" hidden></div>
+        </div>
+        <div class="picked" id="m-picked" hidden></div>
+        <span class="hint">Item não está na lista? <button type="button" class="link" id="m-novo">Cadastrar novo item</button></span>
+      </div>
+      <div class="field">
+        <label for="m-qtd">Quantidade <span class="req">*</span></label>
+        <input class="input num" id="m-qtd" inputmode="decimal" placeholder="1">
+      </div>
+      <div class="field">
+        <label for="m-data">Data</label>
+        <input class="input" id="m-data" type="date">
+      </div>
+
+      <!-- saída / troca / empréstimo -->
+      <div class="field" data-for="saida troca emprestimo">
+        <label for="m-resp" id="m-resp-lbl">Quem retirou <span class="req">*</span></label>
+        <input class="input" id="m-resp" placeholder="Nome do funcionário" list="dl-resp">
+      </div>
+      <div class="field" data-for="saida troca emprestimo">
+        <label for="m-destino" id="m-destino-lbl">Destino (setor, local ou equipamento) <span class="req">*</span></label>
+        <input class="input" id="m-destino" placeholder="Ex.: Cozinha, Bomba 2, Bloco B" list="dl-dest">
+      </div>
+      <div class="field" data-for="saida troca">
+        <label for="m-os">Ordem de serviço / motivo</label>
+        <input class="input" id="m-os" placeholder="Ex.: OS 1234, vazamento na pia">
+      </div>
+      <div class="field" data-for="troca">
+        <label for="m-velho">O que foi feito com a peça retirada <span class="req">*</span></label>
+        <select class="input" id="m-velho">
+          <option value="">Selecione</option>
+          <option>Descartada</option>
+          <option>Enviada para conserto</option>
+          <option>Guardada para reaproveitar</option>
+          <option>Devolvida ao fornecedor (garantia)</option>
+          <option>Sucata / reciclagem</option>
+        </select>
+      </div>
+      <div class="field" data-for="emprestimo">
+        <label for="m-prev">Previsão de devolução</label>
+        <input class="input" id="m-prev" type="date">
+      </div>
+
+      <!-- entrada -->
+      <div class="field" data-for="entrada">
+        <label for="m-forn">Fornecedor</label>
+        <input class="input" id="m-forn" placeholder="Nome da loja ou empresa" list="dl-forn">
+      </div>
+      <div class="field" data-for="entrada">
+        <label for="m-nf">Nota fiscal</label>
+        <input class="input" id="m-nf" placeholder="Nº da NF">
+      </div>
+      <div class="field" data-for="entrada">
+        <label for="m-valor">Valor unitário (R$)</label>
+        <input class="input num" id="m-valor" inputmode="decimal" placeholder="0,00">
+      </div>
+      <div class="field" data-for="entrada">
+        <label for="m-recebeu">Quem recebeu</label>
+        <input class="input" id="m-recebeu" placeholder="Nome" list="dl-resp">
+      </div>
+
+      <div class="field full">
+        <label for="m-obs">Observação</label>
+        <textarea class="input" id="m-obs" placeholder="Opcional"></textarea>
+      </div>
+      <div class="full actions">
+        <button class="btn primary" type="submit" id="m-enviar">Registrar saída</button>
+        <span class="hint" id="m-msg"></span>
+      </div>
+    </form>
+    <datalist id="dl-resp"></datalist><datalist id="dl-dest"></datalist><datalist id="dl-forn"></datalist><datalist id="dl-cat"></datalist>
+  </section>
+
+  <!-- ITENS -->
+  <section id="t-itens" hidden>
+    <div class="sec-head"><h2 class="sec">Itens do estoque</h2><span class="muted" id="i-count"></span></div>
+    <div class="toolbar">
+      <input class="input" id="i-busca" placeholder="Buscar por nome, código ou local" type="search">
+      <select class="input" id="i-cat" aria-label="Categoria"><option value="">Todas as categorias</option></select>
+      <div class="chips" id="i-status">
+        <button class="chip" data-s="" aria-pressed="true">Todos</button>
+        <button class="chip" data-s="baixo" aria-pressed="false">Abaixo do mínimo</button>
+        <button class="chip" data-s="zero" aria-pressed="false">Zerados</button>
+      </div>
+      <button class="btn primary" id="i-novo">Novo item</button>
+    </div>
+    <div class="tablebox"><table>
+      <thead><tr><th>Código</th><th>Item</th><th class="hide-m">Categoria</th><th class="hide-s">Local</th><th class="n">Estoque</th><th class="n hide-s">Mín.</th><th>Situação</th><th></th></tr></thead>
+      <tbody id="i-body"></tbody>
+    </table></div>
+  </section>
+
+  <!-- HISTÓRICO -->
+  <section id="t-historico" hidden>
+    <div class="sec-head"><h2 class="sec">Histórico</h2><span class="muted">Tudo que entrou e saiu, com quem registrou.</span></div>
+    <div class="toolbar">
+      <input class="input" id="h-mes" type="month" aria-label="Mês" style="flex:0 1 170px">
+      <input class="input" id="h-busca" placeholder="Buscar item, pessoa, destino, OS…" type="search">
+      <button class="btn" id="h-csv" hidden>Exportar planilha (CSV)</button>
+    </div>
+    <div class="chips" id="h-tipos" style="margin-bottom:12px">
+      <button class="chip" data-t="" aria-pressed="true">Todos</button>
+      <button class="chip" data-t="saida" aria-pressed="false">Saídas</button>
+      <button class="chip" data-t="entrada" aria-pressed="false">Entradas</button>
+      <button class="chip" data-t="troca" aria-pressed="false">Trocas</button>
+      <button class="chip" data-t="emprestimo" aria-pressed="false">Empréstimos</button>
+      <button class="chip" data-t="devolucao" aria-pressed="false">Devoluções</button>
+      <button class="chip" data-t="ajuste" aria-pressed="false">Ajustes</button>
+    </div>
+    <div class="summary" id="h-sum"></div>
+    <div class="tablebox"><table>
+      <thead><tr><th>Data</th><th>Tipo</th><th>Item</th><th class="n">Qtd</th><th>Destino / origem</th><th class="hide-s">Responsável</th><th class="hide-m">Registrado por</th><th></th></tr></thead>
+      <tbody id="h-body"></tbody>
+    </table></div>
+  </section>
+
+  <!-- EMPRÉSTIMOS -->
+  <section id="t-emprestimos" hidden>
+    <div class="sec-head"><h2 class="sec">Empréstimos em aberto</h2><span class="muted">Ferramentas fora do almoxarifado que precisam voltar.</span></div>
+    <div class="tablebox"><table>
+      <thead><tr><th>Item</th><th class="n">Qtd</th><th>Com quem</th><th class="hide-s">Onde</th><th>Saiu em</th><th>Devolver até</th><th></th></tr></thead>
+      <tbody id="e-body"></tbody>
+    </table></div>
+  </section>
+
+</main>
+
+<div class="overlay" id="modal" hidden><div class="modal" role="dialog" aria-modal="true" id="modal-box"></div></div>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
