@@ -48,6 +48,7 @@
 <nav class="tabs" aria-label="Seções">
   <div class="wrap" role="tablist">
     <button role="tab" data-tab="painel" aria-selected="true">Painel</button>
+    <button role="tab" data-tab="demandas" aria-selected="false">Demandas <span class="badge" id="b-dem">0</span></button>
     <button role="tab" data-tab="os" aria-selected="false">OS <span class="badge" id="b-os">0</span></button>
     <button role="tab" data-tab="registrar" aria-selected="false">Registrar</button>
     <button role="tab" data-tab="itens" aria-selected="false">Itens <span class="badge" id="b-itens">0</span></button>
@@ -60,11 +61,13 @@
 
 <main class="wrap">
   <div id="notices"></div>
+  <div id="aviso-dem"></div>
 
   <!-- PAINEL -->
   <section id="t-painel" class="stack">
     <div class="kpis">
       <button class="kpi" data-go="itens"><span class="lbl">Itens cadastrados</span><span class="val num" id="k-itens">0</span><span class="sub" id="k-itens-sub">nenhum item ainda</span></button>
+      <button class="kpi" id="k-dem-box" data-go="demandas"><span class="lbl">Demandas em aberto</span><span class="val num" id="k-dem">0</span><span class="sub" id="k-dem-sub">nenhuma atrasada</span></button>
       <button class="kpi" id="k-os-box" data-go="os"><span class="lbl">OS em aberto</span><span class="val num" id="k-os">0</span><span class="sub" id="k-os-sub">nenhuma atrasada</span></button>
       <button class="kpi" id="k-baixo-box" data-go="itens" data-filter="baixo"><span class="lbl">Abaixo do mínimo</span><span class="val num" id="k-baixo">0</span><span class="sub" id="k-baixo-sub">tudo em ordem</span></button>
       <button class="kpi" id="k-emp-box" data-go="emprestimos"><span class="lbl">Empréstimos abertos</span><span class="val num" id="k-emp">0</span><span class="sub" id="k-emp-sub">nenhum atrasado</span></button>
@@ -76,6 +79,10 @@
         <div class="rows" id="p-ultimas"></div>
       </div>
       <div class="stack">
+        <div class="panel" id="p-dem-box">
+          <h3 id="p-dem-tit">Demandas em aberto</h3>
+          <div class="rows" id="p-dem"></div>
+        </div>
         <div class="panel" id="p-os-box">
           <h3>Ordens de serviço em aberto</h3>
           <div class="rows" id="p-os"></div>
@@ -92,6 +99,39 @@
     </div>
   </section>
 
+
+  <!-- DEMANDAS -->
+  <section id="t-demandas" class="stack" hidden>
+    <div>
+      <div class="sec-head"><h2 class="sec">Demandas</h2><button class="btn primary" id="dm-nova" hidden>Nova demanda</button></div>
+      <div class="toolbar">
+        <input class="input" id="dm-busca" placeholder="Buscar por número, demanda, local ou pessoa" type="search">
+        <select class="input" id="dm-resp" aria-label="Responsável"><option value="">Todos os responsáveis</option></select>
+      </div>
+      <div class="chips" id="dm-filtros" style="margin-bottom:12px">
+        <button class="chip" data-f="aberto" aria-pressed="true">Em aberto</button>
+        <button class="chip" data-f="minhas" aria-pressed="false">Comigo</button>
+        <button class="chip" data-f="ciente" aria-pressed="false">Aguardando ciente</button>
+        <button class="chip" data-f="atrasadas" aria-pressed="false">Atrasadas</button>
+        <button class="chip" data-f="concluidas" aria-pressed="false">Concluídas</button>
+        <button class="chip" data-f="canceladas" aria-pressed="false">Canceladas</button>
+        <button class="chip" data-f="todas" aria-pressed="false">Todas</button>
+      </div>
+      <div class="tablebox"><table>
+        <thead><tr><th>Nº</th><th>Demanda</th><th class="hide-s">Responsável</th><th class="hide-s">Prioridade</th><th>Situação</th><th class="hide-s">Prazo</th></tr></thead>
+        <tbody id="dm-body"></tbody>
+      </table></div>
+      <p class="hint" style="margin-top:10px">A lista mostra as demandas em aberto e as encerradas nos últimos 90 dias. Todas ficam guardadas na aba Demandas da planilha.</p>
+    </div>
+    <div class="panel" id="pv-box" hidden>
+      <div class="sec-head" style="margin-bottom:6px"><h3>Preventivas</h3><button class="btn small" id="pv-nova">Nova preventiva</button></div>
+      <p class="cap">Tarefas que se repetem. Na data marcada, o sistema cria a demanda sozinho e ela aparece para o responsável.</p>
+      <div class="tablebox flat"><table>
+        <thead><tr><th>Nº</th><th>Tarefa</th><th>Repete</th><th class="hide-s">Responsável</th><th>Próxima</th></tr></thead>
+        <tbody id="pv-body"></tbody>
+      </table></div>
+    </div>
+  </section>
 
   <!-- ORDENS DE SERVIÇO -->
   <section id="t-os" hidden>
@@ -297,6 +337,17 @@
         <div class="tablebox flat"><table><thead><tr><th>Ferramenta</th><th>Com quem</th><th class="n">Fora há</th><th>Devolver até</th></tr></thead><tbody id="d-emp"></tbody></table></div></div>
     </div>
 
+    <div class="dash-bloco" id="d-dem-bloco">
+      <div class="sec-head"><h2 class="sec sub-sec">Demandas</h2><span class="muted">Criadas ou encerradas no período, mais as que estão em aberto agora</span></div>
+      <div class="kpis kpis6" id="d-dem-kpis"></div>
+      <div class="grid-dash">
+        <div class="panel"><h3>Em aberto por responsável</h3><p class="cap">Demandas pendentes ou em andamento agora</p><div id="d-dem-resp" class="hbars"></div></div>
+        <div class="panel"><h3>Concluídas por colaborador</h3><p class="cap">Demandas encerradas no período</p><div id="d-dem-colab" class="hbars"></div></div>
+      </div>
+      <div class="panel"><h3>Demandas atrasadas agora</h3><p class="cap">Em aberto e com o prazo vencido</p>
+        <div class="tablebox flat"><table><thead><tr><th>Nº</th><th>Demanda</th><th>Responsável</th><th>Ciente</th><th class="n">Atraso</th></tr></thead><tbody id="d-dem-atras"></tbody></table></div></div>
+    </div>
+
     <div class="dash-bloco" id="d-os-bloco">
       <div class="sec-head"><h2 class="sec sub-sec">Ordens de serviço</h2><span class="muted">Abertas ou encerradas no período, mais as que estão em aberto agora</span></div>
       <div class="kpis kpis6" id="d-os-kpis"></div>
@@ -329,7 +380,7 @@
     <div class="sec-head"><h2 class="sec">Usuários e permissões</h2><span class="muted">Quem entra no sistema e o que cada perfil pode fazer.</span></div>
     <div class="panel">
       <div class="sec-head" style="margin-bottom:10px"><h3>Colaboradores</h3><button class="btn primary small" id="q-novo-u">Novo colaborador</button></div>
-      <div class="tablebox flat"><table><thead><tr><th>Nome</th><th>Usuário</th><th>Perfil</th><th>Situação</th><th class="hide-s">Senha</th><th></th></tr></thead><tbody id="q-usuarios"></tbody></table></div>
+      <div class="tablebox flat"><table><thead><tr><th>Nome</th><th>Usuário</th><th>Perfil</th><th>Situação</th><th class="hide-m">WhatsApp</th><th class="hide-s">Senha</th><th></th></tr></thead><tbody id="q-usuarios"></tbody></table></div>
     </div>
     <div class="panel">
       <div class="sec-head" style="margin-bottom:10px"><h3>Perfis e permissões</h3><button class="btn small" id="q-novo-p">Novo perfil</button></div>

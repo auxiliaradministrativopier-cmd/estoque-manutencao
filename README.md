@@ -33,6 +33,16 @@ Os dados do estoque e as senhas não ficam neste repositório, só na planilha.
 
 A aba **OS** registra pedidos de serviço: local, categoria, prioridade com prazo, responsável, fotos de antes e depois (salvas na pasta "Fotos das OS - Estoque da Manutenção", ao lado da planilha) e os materiais retirados do estoque pela OS. O andamento fica numa linha do tempo e na coluna Andamento da aba **OS** da planilha. As permissões Ver, Abrir, Atender e Gerenciar OS ficam na aba **Perfis**.
 
+## Demandas
+
+A aba **Demandas** é onde a administração delega tarefas para a equipe da manutenção: o que fazer, onde, prioridade, prazo e responsável. Quem recebe vê um destaque ao entrar no site e confirma com **Dar ciente**; a administração vê quem leu e quando. Depois o responsável inicia e conclui, descrevendo o que foi feito. Se a demanda precisar de material ou de fotos, vira uma OS com um clique (**Abrir OS**) e as duas ficam ligadas.
+
+O botão **Avisar no WhatsApp** abre o WhatsApp com a mensagem pronta e o link do sistema. O número de cada colaborador fica em **Usuários** (coluna Telefone da aba Usuarios).
+
+**Preventivas** são tarefas que se repetem (toda semana, todo mês, a cada 6 meses…). Na data marcada, o sistema cria a demanda sozinho na primeira vez que alguém abre o site no dia. Se o site ficar dias sem uso, cria só uma demanda atrasada e passa para a próxima data.
+
+Os dados ficam nas abas **Demandas** e **Preventivas** da planilha. As permissões Ver, Executar e Delegar demandas ficam na aba **Perfis**.
+
 ## Importar inventário
 
 Em **Itens → Importar inventário**, envie a planilha da contagem (.xlsx ou .csv). O sistema acha as colunas pelo título (Código, Item, Especificação, Categoria, Tipo, Un., Saldo atual ou Quantidade, Estoque mínimo, Localização, Observações), mostra uma prévia e grava a diferença de cada item como ajuste no histórico. Antes de gravar, guarda uma cópia oculta da aba Itens.

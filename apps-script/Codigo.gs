@@ -1,5 +1,5 @@
 /**
- * Estoque da Manutenção — banco de dados na planilha do Google.
+ * Pier Manutenção — banco de dados na planilha do Google.
  *
  * Como instalar (uma vez só):
  *  1. Abra a planilha "Estoque da Manutenção" no Google Drive.
@@ -65,8 +65,38 @@ const ABAS = {
       ['atualizadoEm', 'Atualizado em']
     ],
     num: []
+  },
+  dem: {
+    nome: 'Demandas',
+    criar: true,
+    cols: [
+      ['id', 'ID'], ['numero', 'Número'], ['status', 'Situação'], ['prioridade', 'Prioridade'], ['prazo', 'Prazo'],
+      ['categoria', 'Categoria'], ['local', 'Local'], ['titulo', 'Demanda'], ['descricao', 'Descrição'],
+      ['responsavel', 'Responsável'], ['responsavelUsuario', 'Usuário responsável'],
+      ['criadaEm', 'Criada em'], ['criadaPor', 'Criada por'], ['criadaPorUsuario', 'Usuário que criou'],
+      ['cienteEm', 'Ciente em'], ['iniciadaEm', 'Iniciada em'], ['concluidaEm', 'Concluída em'], ['concluidaPor', 'Concluída por'],
+      ['conclusao', 'O que foi feito'], ['motivoCancelamento', 'Motivo do cancelamento'], ['os', 'OS gerada'],
+      ['preventiva', 'Preventiva'], ['andamento', 'Andamento'], ['atualizadoEm', 'Atualizado em']
+    ],
+    num: []
+  },
+  prev: {
+    nome: 'Preventivas',
+    criar: true,
+    cols: [
+      ['id', 'ID'], ['numero', 'Número'], ['ativa', 'Ativa'], ['titulo', 'Tarefa'], ['descricao', 'Descrição'],
+      ['local', 'Local'], ['categoria', 'Categoria'], ['prioridade', 'Prioridade'],
+      ['responsavel', 'Responsável'], ['responsavelUsuario', 'Usuário responsável'],
+      ['intervalo', 'Repete a cada'], ['unidade', 'Unidade'], ['prazoDias', 'Dias para fazer'],
+      ['proxima', 'Próxima data'], ['ultima', 'Última gerada'], ['criadaPor', 'Criada por'], ['criadaEm', 'Criada em'],
+      ['atualizadoEm', 'Atualizado em']
+    ],
+    num: ['intervalo', 'prazoDias']
   }
 };
+
+const DEM_STATUS = { pendente: 'Pendente', andamento: 'Em andamento', concluida: 'Concluída', cancelada: 'Cancelada' };
+const PREV_UNIDADES = ['dias', 'semanas', 'meses'];
 
 const OS_STATUS = { aberta: 'Aberta', andamento: 'Em andamento', concluida: 'Concluída', cancelada: 'Cancelada' };
 const OS_PRIORIDADES = ['Urgente', 'Alta', 'Normal', 'Baixa'];
@@ -81,7 +111,7 @@ const TIPO_POR_NOME = Object.keys(TIPOS).reduce((m, k) => { m[TIPOS[k]] = k; ret
 // ---------- entrada da web ----------
 
 function doGet() {
-  return json({ ok: true, app: 'Estoque da Manutenção' });
+  return json({ ok: true, app: 'Pier Manutenção' });
 }
 
 function doPost(e) {
@@ -95,6 +125,7 @@ function doPost(e) {
     const base = { ok: true, nome, perfil: conta.perfil, perms: conta.perms };
     const pode = p => { if (!conta.perms[p]) throw falha('Seu perfil não tem permissão para isso.'); };
     const algum = ps => { if (!ps.some(p => conta.perms[p])) throw falha('Seu perfil não tem permissão para isso.'); };
+    if (req.acao === 'entrar' || req.acao === 'dados') gerarPreventivasSePreciso();
     if (req.acao === 'entrar') return json(base);
     if (req.acao === 'dados') return json(Object.assign(base, { dados: dados(req.meses, conta) }));
     if (req.acao === 'relatorio') { pode('dashboard'); return json(Object.assign(base, { relatorio: relatorio(req.de, req.ate) })); }
@@ -111,6 +142,10 @@ function doPost(e) {
         case 'osAtualizar': msg = osAtualizar(req, conta); break;
         case 'osFoto': msg = osFoto(req, conta); break;
         case 'osFotoRemover': msg = osFotoRemover(req, conta); break;
+        case 'demCriar': pode('dem_delegar'); msg = demCriar(req.dem || {}, conta); extra.demId = msg.id; msg = msg.texto; break;
+        case 'demAtualizar': msg = demAtualizar(req, conta); break;
+        case 'salvarPreventiva': pode('dem_delegar'); msg = salvarPreventiva(req.prev || {}, conta); break;
+        case 'excluirPreventiva': pode('dem_delegar'); msg = excluirPreventiva(req.id); break;
         case 'importarContagem': pode('itens_editar'); msg = importarContagem(req, conta); break;
         case 'devolver': pode('devolver'); msg = devolver(req, nome); break;
         case 'salvarItem': pode((req.item || {}).id ? 'itens_editar' : 'itens_cadastrar'); msg = salvarItem(req, nome); break;
@@ -309,7 +344,22 @@ function dados(meses, conta) {
       String(o.concluidaEm || o.atualizadoEm).slice(0, 10) >= corte ||
       ms.indexOf(String(o.abertaEm).slice(0, 7)) >= 0);
     out.os = comMateriais(lista.map(limpa), todas);
-    out.colaboradores = lerUsuarios().lista.filter(u => u.ativo).map(u => ({ usuario: u.usuario, nome: u.nome || u.usuario }));
+  }
+  if (p.dem_ver || p.dem_executar || p.dem_delegar) {
+    const corte = Utilities.formatDate(new Date(Date.now() - 90 * 864e5), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+    let lista = linhas(tabela('dem')).filter(d =>
+      d.status === DEM_STATUS.pendente || d.status === DEM_STATUS.andamento ||
+      String(d.concluidaEm || d.atualizadoEm).slice(0, 10) >= corte ||
+      ms.indexOf(String(d.criadaEm).slice(0, 7)) >= 0);
+    // quem só executa vê as próprias demandas e as que estão sem responsável
+    if (!p.dem_ver && !p.dem_delegar) lista = lista.filter(d => d.responsavelUsuario === conta.usuario || !d.responsavelUsuario);
+    out.demandas = lista.map(limpa);
+    if (p.dem_delegar) out.preventivas = linhas(tabela('prev')).map(limpa);
+  }
+  if (out.os || out.demandas) {
+    const fone = p.dem_delegar || p.os_gerenciar || p.usuarios;
+    out.colaboradores = lerUsuarios().lista.filter(u => u.ativo).map(u =>
+      fone ? { usuario: u.usuario, nome: u.nome || u.usuario, telefone: u.telefone } : { usuario: u.usuario, nome: u.nome || u.usuario });
   }
   return out;
 }
@@ -417,6 +467,9 @@ const PERMISSOES = [
   ['os_abrir', 'Abrir OS', 'Abrir ordens de serviço', 'Ordens de serviço'],
   ['os_atender', 'Atender OS', 'Iniciar, concluir e pôr fotos nas OS atribuídas a si ou sem responsável', 'Ordens de serviço'],
   ['os_gerenciar', 'Gerenciar OS', 'Atribuir, editar, cancelar e reabrir qualquer OS', 'Ordens de serviço'],
+  ['dem_ver', 'Ver demandas', 'Ver todas as demandas da equipe', 'Demandas'],
+  ['dem_executar', 'Executar demandas', 'Dar ciente, iniciar e concluir as demandas recebidas', 'Demandas'],
+  ['dem_delegar', 'Delegar demandas', 'Criar e delegar demandas, cadastrar preventivas, cancelar e reabrir', 'Demandas'],
   ['itens_cadastrar', 'Cadastrar itens', 'Cadastrar itens novos', 'Cadastro'],
   ['itens_editar', 'Editar itens', 'Editar, ajustar estoque e excluir itens', 'Cadastro'],
   ['historico_estornar', 'Estornar', 'Estornar lançamentos', 'Controle'],
@@ -424,7 +477,7 @@ const PERMISSOES = [
   ['usuarios', 'Usuários', 'Gerenciar usuários e permissões', 'Controle']
 ];
 const PADRAO_MANUTENCAO = ['painel', 'itens_ver', 'historico_ver', 'registrar_saida', 'registrar_entrada',
-  'registrar_troca', 'registrar_emprestimo', 'devolver', 'itens_cadastrar', 'os_ver', 'os_abrir', 'os_atender'];
+  'registrar_troca', 'registrar_emprestimo', 'devolver', 'itens_cadastrar', 'os_ver', 'os_abrir', 'os_atender', 'dem_ver', 'dem_executar'];
 
 function autenticar(usuario, senha) {
   const u = String(usuario || '').trim().toLowerCase();
@@ -445,6 +498,7 @@ function lerUsuarios() {
     c[label] = head.indexOf(label);
     if (c[label] < 0) throw falha('A coluna "' + label + '" não foi encontrada na aba Usuarios.');
   });
+  c['Telefone'] = head.indexOf('Telefone');
   const lista = [];
   for (let i = 1; i < vals.length; i++) {
     const r = vals[i];
@@ -452,7 +506,8 @@ function lerUsuarios() {
     if (!/^[a-z0-9._@-]{2,40}$/.test(usuario)) continue;
     lista.push({
       row: i + 1, usuario, nome: texto(r[c['Nome']], 60), senha: String(r[c['Senha']]).trim(),
-      perfil: String(r[c['Perfil']]).trim(), ativo: String(r[c['Ativo']]).trim().toLowerCase().indexOf('n') !== 0
+      perfil: String(r[c['Perfil']]).trim(), ativo: String(r[c['Ativo']]).trim().toLowerCase().indexOf('n') !== 0,
+      telefone: c['Telefone'] >= 0 ? String(r[c['Telefone']]).replace(/\D/g, '') : ''
     });
   }
   return { sh, c, lista, ncol: head.length };
@@ -480,7 +535,7 @@ function lerPerfis() {
 function equipe() {
   const perfis = lerPerfis();
   return {
-    usuarios: lerUsuarios().lista.map(u => ({ usuario: u.usuario, nome: u.nome, senha: u.senha, perfil: u.perfil, ativo: u.ativo })),
+    usuarios: lerUsuarios().lista.map(u => ({ usuario: u.usuario, nome: u.nome, senha: u.senha, perfil: u.perfil, ativo: u.ativo, telefone: u.telefone })),
     perfis: Object.keys(perfis).map(n => ({ nome: n, perms: perfis[n], fixo: n === PERFIL_TOTAL })),
     permissoes: PERMISSOES.map(([chave, coluna, descricao, grupo]) => ({ chave, descricao, grupo }))
   };
@@ -499,7 +554,13 @@ function salvarUsuario(r, conta) {
   const perfil = String(v.perfil || '').trim();
   if (!perfis[perfil]) throw falha('Perfil não encontrado.');
   const ativo = v.ativo !== false;
-  const U = lerUsuarios();
+  const telefone = String(v.telefone || '').replace(/\D/g, '').slice(0, 15);
+  if (telefone && telefone.length < 10) throw falha('Telefone incompleto: informe o DDD e o número.');
+  let U = lerUsuarios();
+  if (U.c['Telefone'] < 0) {
+    U.sh.getRange(1, U.ncol + 1).setValue('Telefone').setFontWeight('bold').setBackground('#1F2A37').setFontColor('#FFFFFF');
+    U = lerUsuarios();
+  }
   const outro = U.lista.find(x => x.usuario === usuario && x.usuario !== original);
   if (outro) throw falha('O usuário "' + usuario + '" já existe.');
   if (original && original === conta.usuario) {
@@ -508,7 +569,7 @@ function salvarUsuario(r, conta) {
   }
   const linha = [];
   linha[U.c['Usuário']] = usuario; linha[U.c['Nome']] = nome; linha[U.c['Senha']] = senha;
-  linha[U.c['Perfil']] = perfil; linha[U.c['Ativo']] = ativo ? 'Sim' : 'Não';
+  linha[U.c['Perfil']] = perfil; linha[U.c['Ativo']] = ativo ? 'Sim' : 'Não'; linha[U.c['Telefone']] = telefone;
   let row;
   if (original) {
     const atual = U.lista.find(x => x.usuario === original);
@@ -531,6 +592,15 @@ function salvarUsuario(r, conta) {
       if (o.responsavelUsuario === original) { upd.responsavelUsuario = usuario; upd.responsavel = nome; }
       if (o.abertaPorUsuario === original) upd.abertaPorUsuario = usuario;
       if (Object.keys(upd).length) gravar(t, upd, o._row);
+    });
+    ['dem', 'prev'].forEach(k => {
+      const td = tabela(k);
+      linhas(td).forEach(d => {
+        const upd = {};
+        if (d.responsavelUsuario === original) { upd.responsavelUsuario = usuario; upd.responsavel = nome; }
+        if (d.criadaPorUsuario === original) upd.criadaPorUsuario = usuario;
+        if (Object.keys(upd).length) gravar(td, upd, d._row);
+      });
     });
   }
   return original ? 'Usuário atualizado: ' + nome + '.' : 'Usuário criado: ' + nome + '.';
@@ -740,9 +810,14 @@ function relatorio(de, ate) {
     const ab = String(o.abertaEm).slice(0, 10), fe = String(o.concluidaEm).slice(0, 10);
     return (ab >= de && ab <= ate) || (fe && fe >= de && fe <= ate) || o.status === OS_STATUS.aberta || o.status === OS_STATUS.andamento;
   }).map(limpa);
+  const demDoPeriodo = linhas(tabela('dem')).filter(d => {
+    const cr = String(d.criadaEm).slice(0, 10), fe = String(d.concluidaEm).slice(0, 10);
+    return (cr >= de && cr <= ate) || (fe && fe >= de && fe <= ate) || d.status === DEM_STATUS.pendente || d.status === DEM_STATUS.andamento;
+  }).map(limpa);
   return {
     de, ate,
     os: comMateriais(osDoPeriodo, todas),
+    demandas: demDoPeriodo,
     movs: todas.filter(m => m.data >= de && m.data <= ate).map(limpa),
     itens: linhas(tabela('itens')).map(limpa),
     emprestimos: linhas(tabela('emp')).map(limpa),
@@ -883,6 +958,11 @@ function osAtualizar(r, conta) {
   }
   upd.andamento = osAndamento(o.andamento, conta.nome, txt);
   gravar(t, upd, o._row);
+  if (r.op === 'concluir' || r.op === 'cancelar') {
+    const td = tabela('dem');
+    linhas(td).filter(d => d.os === o.numero).forEach(d =>
+      gravar(td, { andamento: osAndamento(d.andamento, conta.nome, 'A ' + o.numero + ' foi ' + (r.op === 'concluir' ? 'concluída' : 'cancelada')), atualizadoEm: agora() }, d._row));
+  }
   return msg;
 }
 
@@ -957,6 +1037,262 @@ function osFotoRemover(r, conta) {
   upd[campo] = ids.filter(x => x !== r.fotoId).join(',');
   gravar(t, upd, o._row);
   return 'Foto removida.';
+}
+
+// ---------- demandas da administração para a manutenção ----------
+
+function demCampos(v) {
+  const titulo = texto(v.titulo, 120);
+  if (!titulo) throw falha('Descreva a demanda em poucas palavras.');
+  const prioridade = OS_PRIORIDADES.indexOf(v.prioridade) >= 0 ? v.prioridade : 'Normal';
+  const prazo = /^\d{4}-\d{2}-\d{2}$/.test(String(v.prazo || '')) ? String(v.prazo) : prazoPadrao(prioridade);
+  return {
+    titulo, prioridade, prazo, local: texto(v.local, 120), categoria: texto(v.categoria, 40), descricao: texto(v.descricao, 3000)
+  };
+}
+
+function demMaxNumero(lista) {
+  return lista.reduce((m, d) => { const x = /(\d+)\s*$/.exec(d.numero || ''); return x ? Math.max(m, Number(x[1])) : m; }, 0);
+}
+
+function demGravarNova(t, n, campos, resp, autor, extra) {
+  const numero = 'DM-' + ('000' + n).slice(-4);
+  const id = novoId('D');
+  let and = osAndamento('', autor.nome, extra && extra.preventiva ? 'Criada pela preventiva ' + extra.preventivaNumero : 'Criou a demanda');
+  if (resp) and = osAndamento(and, autor.nome, 'Delegou a ' + (resp.nome || resp.usuario));
+  gravar(t, Object.assign({
+    id, numero, status: DEM_STATUS.pendente, criadaEm: agora(), criadaPor: autor.nome, criadaPorUsuario: autor.usuario || '',
+    responsavel: resp ? (resp.nome || resp.usuario) : '', responsavelUsuario: resp ? resp.usuario : '',
+    preventiva: extra && extra.preventiva ? extra.preventiva : '', andamento: and, atualizadoEm: agora()
+  }, campos));
+  return { id, numero };
+}
+
+function demCriar(v, conta) {
+  const campos = demCampos(v);
+  const resp = v.responsavelUsuario ? colaboradorAtivo(v.responsavelUsuario) : null;
+  const t = tabela('dem');
+  const r = demGravarNova(t, demMaxNumero(linhas(t)) + 1, campos, resp, conta);
+  return { texto: r.numero + ' criada' + (resp ? ' e delegada a ' + (resp.nome || resp.usuario) : '') + '.', id: r.id };
+}
+
+function demDireitos(d, conta) {
+  const p = conta.perms;
+  const del = !!p.dem_delegar;
+  const livre = !d.responsavelUsuario;
+  const minha = d.responsavelUsuario === conta.usuario;
+  const encerrada = d.status === DEM_STATUS.concluida || d.status === DEM_STATUS.cancelada;
+  return { del, livre, minha, encerrada, exec: del || (!!p.dem_executar && (minha || livre)) };
+}
+
+function demAtualizar(r, conta) {
+  const t = tabela('dem');
+  const d = linhas(t).find(x => x.id === r.id);
+  if (!d) throw falha('Demanda não encontrada. Atualize a página.');
+  const dir = demDireitos(d, conta);
+  const negar = () => { throw falha('Seu perfil não tem permissão para isso nesta demanda.'); };
+  const upd = { atualizadoEm: agora() };
+  let txt, msg = 'Demanda atualizada.';
+  switch (r.op) {
+    case 'ciente':
+      if (!dir.minha) throw falha('Só o responsável pela demanda pode dar o ciente.');
+      if (d.cienteEm) return 'O ciente já estava registrado.';
+      upd.cienteEm = agora(); txt = 'Deu ciente'; msg = 'Ciente registrado na ' + d.numero + '.';
+      break;
+    case 'iniciar':
+      if (!dir.exec) negar();
+      if (d.status !== DEM_STATUS.pendente) throw falha('Só uma demanda pendente pode ser iniciada.');
+      upd.status = DEM_STATUS.andamento; upd.iniciadaEm = agora();
+      if (dir.livre) { upd.responsavel = conta.nome; upd.responsavelUsuario = conta.usuario; }
+      if ((dir.minha || dir.livre) && !d.cienteEm) upd.cienteEm = agora();
+      txt = 'Iniciou a demanda'; msg = d.numero + ' em andamento.';
+      break;
+    case 'concluir': {
+      if (!dir.exec) negar();
+      if (dir.encerrada) throw falha('Esta demanda já está encerrada.');
+      const c = texto(r.conclusao, 3000);
+      if (!c) throw falha('Descreva o que foi feito.');
+      upd.status = DEM_STATUS.concluida; upd.concluidaEm = agora(); upd.concluidaPor = conta.nome; upd.conclusao = c;
+      if (!d.iniciadaEm) upd.iniciadaEm = upd.concluidaEm;
+      if (dir.livre) { upd.responsavel = conta.nome; upd.responsavelUsuario = conta.usuario; }
+      if ((dir.minha || dir.livre) && !d.cienteEm) upd.cienteEm = upd.concluidaEm;
+      txt = 'Concluiu: ' + c; msg = d.numero + ' concluída.';
+      break;
+    }
+    case 'cancelar': {
+      if (!dir.del) negar();
+      if (dir.encerrada) throw falha('Esta demanda já está encerrada.');
+      const m = texto(r.motivo, 300);
+      if (!m) throw falha('Informe o motivo do cancelamento.');
+      upd.status = DEM_STATUS.cancelada; upd.motivoCancelamento = m; upd.concluidaEm = agora();
+      txt = 'Cancelou: ' + m; msg = d.numero + ' cancelada.';
+      break;
+    }
+    case 'reabrir':
+      if (!dir.del) negar();
+      if (!dir.encerrada) throw falha('Esta demanda já está em aberto.');
+      upd.status = DEM_STATUS.pendente; upd.concluidaEm = ''; upd.concluidaPor = ''; upd.conclusao = ''; upd.motivoCancelamento = '';
+      txt = 'Reabriu a demanda' + (texto(r.motivo, 300) ? ': ' + texto(r.motivo, 300) : ''); msg = d.numero + ' reaberta.';
+      break;
+    case 'atribuir':
+      if (!dir.del) negar();
+      if (dir.encerrada) throw falha('Reabra a demanda antes de mudar o responsável.');
+      if (!r.responsavelUsuario) { upd.responsavel = ''; upd.responsavelUsuario = ''; upd.cienteEm = ''; txt = 'Tirou o responsável'; }
+      else {
+        const u = colaboradorAtivo(r.responsavelUsuario);
+        if (u.usuario === d.responsavelUsuario) return 'O responsável continua o mesmo.';
+        upd.responsavel = u.nome || u.usuario; upd.responsavelUsuario = u.usuario; upd.cienteEm = '';
+        txt = 'Delegou a ' + upd.responsavel; msg = d.numero + ' delegada a ' + upd.responsavel + '.';
+      }
+      break;
+    case 'editar':
+      if (!dir.del) negar();
+      Object.assign(upd, demCampos(r.dem || {}));
+      txt = 'Editou os dados da demanda';
+      break;
+    case 'nota': {
+      const p = conta.perms;
+      if (!(dir.del || dir.minha || dir.livre || p.dem_ver)) negar();
+      const n = texto(r.nota, 1000);
+      if (!n) throw falha('Escreva a anotação.');
+      txt = 'Anotou: ' + n; msg = 'Anotação registrada.';
+      break;
+    }
+    case 'os': {
+      if (!conta.perms.os_abrir || !(dir.del || dir.minha)) throw falha('Seu perfil não pode abrir OS a partir desta demanda.');
+      if (dir.encerrada) throw falha('Esta demanda já está encerrada.');
+      if (d.os) throw falha('Esta demanda já gerou a ' + d.os + '.');
+      const o = osAbrir({
+        titulo: d.titulo, local: d.local || 'A definir', categoria: d.categoria, prioridade: d.prioridade, prazo: d.prazo,
+        descricao: d.descricao, solicitante: 'Demanda ' + d.numero,
+        responsavelUsuario: conta.perms.os_gerenciar ? d.responsavelUsuario : ''
+      }, conta);
+      upd.os = o.numero;
+      txt = 'Abriu a ' + o.numero + ' para esta demanda'; msg = o.numero + ' aberta a partir da ' + d.numero + '.';
+      break;
+    }
+    default: throw falha('Ação desconhecida.');
+  }
+  upd.andamento = osAndamento(d.andamento, conta.nome, txt);
+  gravar(t, upd, d._row);
+  return msg;
+}
+
+// ---------- preventivas: demandas que se repetem sozinhas ----------
+
+function isoParaUTC(s) { const p = String(s).split('-').map(Number); return Date.UTC(p[0], p[1] - 1, p[2]); }
+function utcParaIso(ms) { const d = new Date(ms); return d.getUTCFullYear() + '-' + ('0' + (d.getUTCMonth() + 1)).slice(-2) + '-' + ('0' + d.getUTCDate()).slice(-2); }
+function somarDias(s, n) { return utcParaIso(isoParaUTC(s) + n * 864e5); }
+
+// a n-ésima repetição a partir da data inicial (meses mantêm o dia; dia 31 vira o último dia do mês)
+function repeticao(inicio, k, intervalo, unidade) {
+  if (unidade === 'meses') {
+    const p = String(inicio).split('-').map(Number);
+    const mes = p[1] - 1 + k * intervalo;
+    const ano = p[0] + Math.floor(mes / 12), m = ((mes % 12) + 12) % 12;
+    const ultimo = new Date(Date.UTC(ano, m + 1, 0)).getUTCDate();
+    return utcParaIso(Date.UTC(ano, m, Math.min(p[2], ultimo)));
+  }
+  return somarDias(inicio, k * intervalo * (unidade === 'semanas' ? 7 : 1));
+}
+
+function descRepeticao(intervalo, unidade) {
+  const n = Number(intervalo) || 1;
+  if (unidade === 'semanas') return n === 1 ? 'toda semana' : 'a cada ' + n + ' semanas';
+  if (unidade === 'meses') return n === 1 ? 'todo mês' : n === 12 ? 'todo ano' : 'a cada ' + n + ' meses';
+  return n === 1 ? 'todo dia' : 'a cada ' + n + ' dias';
+}
+
+// cria as demandas das preventivas vencidas; uma por preventiva, mesmo que o sistema tenha ficado dias sem uso
+function gerarPreventivas(dia, soId) {
+  const tp = tabela('prev');
+  const prevs = linhas(tp).filter(p => (!soId || p.id === soId) && /^s/i.test(p.ativa) && /^\d{4}-\d{2}-\d{2}$/.test(p.proxima) && p.proxima <= dia);
+  if (!prevs.length) return [];
+  const td = tabela('dem');
+  let n = demMaxNumero(linhas(td));
+  const usuarios = lerUsuarios().lista;
+  const criadas = [];
+  prevs.forEach(p => {
+    const intervalo = Math.max(1, Number(p.intervalo) || 1);
+    const unidade = PREV_UNIDADES.indexOf(p.unidade) >= 0 ? p.unidade : 'meses';
+    // última data prevista até hoje e a próxima depois de hoje
+    let k = 0, data = p.proxima;
+    while (k < 5000) { const prox = repeticao(p.proxima, k + 1, intervalo, unidade); if (prox > dia) break; k++; data = prox; }
+    const proxima = repeticao(p.proxima, k + 1, intervalo, unidade);
+    const u = usuarios.find(x => x.usuario === p.responsavelUsuario && x.ativo);
+    const prazo = somarDias(data, Math.max(0, Number(p.prazoDias) || 0));
+    const campos = {
+      titulo: p.titulo, prioridade: OS_PRIORIDADES.indexOf(p.prioridade) >= 0 ? p.prioridade : 'Normal', prazo,
+      local: p.local, categoria: p.categoria,
+      descricao: (p.descricao ? p.descricao + '\n\n' : '') + 'Preventiva ' + p.numero + ', repete ' + descRepeticao(intervalo, unidade) + '. Data prevista: ' + data.split('-').reverse().join('/') + '.'
+    };
+    n++;
+    const r = demGravarNova(td, n, campos, u || null, { nome: 'Sistema', usuario: '' }, { preventiva: p.id, preventivaNumero: p.numero });
+    gravar(tp, { proxima, ultima: data, atualizadoEm: agora() }, p._row);
+    criadas.push(r.numero);
+  });
+  return criadas;
+}
+
+function gerarPreventivasSePreciso() {
+  const props = PropertiesService.getScriptProperties();
+  const dia = hoje();
+  if (props.getProperty('PREVENTIVAS_DIA') === dia) return;
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return;
+  try {
+    if (props.getProperty('PREVENTIVAS_DIA') === dia) return;
+    gerarPreventivas(dia);
+    props.setProperty('PREVENTIVAS_DIA', dia);
+    SpreadsheetApp.flush();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function salvarPreventiva(v, conta) {
+  const titulo = texto(v.titulo, 120);
+  if (!titulo) throw falha('Descreva a tarefa em poucas palavras.');
+  const intervalo = Math.round(numero(v.intervalo));
+  if (!(intervalo >= 1 && intervalo <= 365)) throw falha('Informe de quanto em quanto tempo a tarefa se repete.');
+  const unidade = PREV_UNIDADES.indexOf(v.unidade) >= 0 ? v.unidade : 'meses';
+  const prazoDias = v.prazoDias === '' || v.prazoDias == null ? 3 : Math.round(numero(v.prazoDias));
+  if (!(prazoDias >= 0 && prazoDias <= 365)) throw falha('Prazo para fazer inválido.');
+  const proxima = /^\d{4}-\d{2}-\d{2}$/.test(String(v.proxima || '')) ? String(v.proxima) : hoje();
+  const resp = v.responsavelUsuario ? colaboradorAtivo(v.responsavelUsuario) : null;
+  const campos = {
+    titulo, descricao: texto(v.descricao, 3000), local: texto(v.local, 120), categoria: texto(v.categoria, 40),
+    prioridade: OS_PRIORIDADES.indexOf(v.prioridade) >= 0 ? v.prioridade : 'Normal',
+    responsavel: resp ? (resp.nome || resp.usuario) : '', responsavelUsuario: resp ? resp.usuario : '',
+    intervalo, unidade, prazoDias, proxima, ativa: v.ativa === false ? 'Não' : 'Sim', atualizadoEm: agora()
+  };
+  const t = tabela('prev');
+  const todas = linhas(t);
+  let id = v.id, numeroPv;
+  if (id) {
+    const p = todas.find(x => x.id === id);
+    if (!p) throw falha('Preventiva não encontrada. Atualize a página.');
+    gravar(t, campos, p._row);
+    numeroPv = p.numero;
+  } else {
+    const max = todas.reduce((m, p) => { const x = /(\d+)\s*$/.exec(p.numero || ''); return x ? Math.max(m, Number(x[1])) : m; }, 0);
+    id = novoId('P');
+    numeroPv = 'PV-' + ('00' + (max + 1)).slice(-3);
+    gravar(t, Object.assign({ id, numero: numeroPv, criadaPor: conta.nome, criadaEm: agora() }, campos));
+  }
+  const fmtData = s => s.split('-').reverse().join('/');
+  if (campos.ativa !== 'Sim') return 'Preventiva ' + numeroPv + ' salva e pausada.';
+  const criadas = gerarPreventivas(hoje(), id);
+  if (criadas.length) return 'Preventiva ' + numeroPv + ' salva. A demanda ' + criadas[0] + ' já foi criada para hoje.';
+  return 'Preventiva ' + numeroPv + ' salva. A primeira demanda será criada em ' + fmtData(proxima) + '.';
+}
+
+function excluirPreventiva(id) {
+  const t = tabela('prev');
+  const p = linhas(t).find(x => x.id === id);
+  if (!p) throw falha('Preventiva não encontrada.');
+  t.sh.deleteRow(p._row);
+  return 'Preventiva ' + p.numero + ' excluída. As demandas que ela já criou continuam na lista.';
 }
 
 // ---------- importação de contagem de inventário ----------
@@ -1088,8 +1424,10 @@ function importarContagem(r, conta) {
 function autorizar() {
   pastaFotos();
   tabela('os');
+  tabela('dem');
+  tabela('prev');
   abaPerfis();
-  Logger.log('Pronto: pasta de fotos, aba OS e permissões verificadas.');
+  Logger.log('Pronto: pasta de fotos, abas OS, Demandas e Preventivas e permissões verificadas.');
 }
 
 function celula(v, isNum) {

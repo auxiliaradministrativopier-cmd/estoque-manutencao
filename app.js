@@ -26,10 +26,10 @@ const API = (window.ESTOQUE_API_URL || "").trim();
 const S = {
   usuario:"", nome:"", senha:"", perfil:"", perms:{}, rel:null, eq:null, dashPreset:"mes", itens:new Map(), emprestimos:[], movs:[],
   tab:"painel", tipo:"saida", picked:null, iStatus:"", hTipo:"", histMes:mesDe(), ocupado:false, ultima:null,
-  os:[], colab:[], oFiltro:"aberto", fotos:new Map()
+  os:[], colab:[], oFiltro:"aberto", fotos:new Map(), dem:[], prev:[], dFiltro:"aberto"
 };
 const can = p => !!(S.perms && S.perms[p]);
-const ABAS_PERM = {painel:["painel"], os:["os_ver","os_abrir","os_atender","os_gerenciar"], registrar:["registrar_saida","registrar_entrada","registrar_troca","registrar_emprestimo"], itens:["itens_ver"], historico:["historico_ver"], emprestimos:["devolver","registrar_emprestimo"], dashboard:["dashboard"], usuarios:["usuarios"]};
+const ABAS_PERM = {painel:["painel"], demandas:["dem_ver","dem_executar","dem_delegar"], os:["os_ver","os_abrir","os_atender","os_gerenciar"], registrar:["registrar_saida","registrar_entrada","registrar_troca","registrar_emprestimo"], itens:["itens_ver"], historico:["historico_ver"], emprestimos:["devolver","registrar_emprestimo"], dashboard:["dashboard"], usuarios:["usuarios"]};
 const podeAba = t => (ABAS_PERM[t]||[]).some(can);
 const primeiraAba = () => Object.keys(ABAS_PERM).find(podeAba) || "painel";
 const movsDoMes = ym => S.movs.filter(m => String(m.data).slice(0,7) === ym);
@@ -66,6 +66,8 @@ function aplicar(d){
   S.movs = d.movs || [];
   S.os = d.os || [];
   S.colab = d.colaboradores || [];
+  S.dem = d.demandas || [];
+  S.prev = d.preventivas || [];
   S.ultima = new Date();
   renderAll(); renderSugestoes();
 }
@@ -195,6 +197,7 @@ function renderPainel(){
     + (abertas.length>6 ? `<div class="empty"><button class="link" data-go2="os">Ver todas as ${abertas.length}</button></div>`:"")
     : `<div class="empty">Nenhuma OS em aberto.${can("os_abrir") ? ` <button class="link" type="button" id="p-os-nova">Abrir uma OS</button>` : ""}</div>`;
   const be = $("#b-emp"); be.textContent = S.emprestimos.length; be.classList.toggle("alert", atras>0);
+  renderPainelDem();
 
   const ult = doMes.filter(m => m.obs !== "Importação de inventário").sort(ordMov).slice(0,10);
   $("#p-ultimas").innerHTML = ult.length ? ult.map(m => `
@@ -540,6 +543,8 @@ function renderAll(){
   if (S.tab==="emprestimos") renderEmp();
   if (S.tab==="dashboard") renderDash();
   if (S.tab==="os") renderOS();
+  if (S.tab==="demandas") renderDem();
+  renderAvisoDem();
   renderOsRef();
   renderPicked();
 }
@@ -553,6 +558,9 @@ function aplicarPermissoes(){
   $("#i-novo").hidden = !can("itens_cadastrar");
   $("#i-importar").hidden = !can("itens_editar");
   $("#o-nova").hidden = !can("os_abrir");
+  $("#dm-nova").hidden = !can("dem_delegar");
+  $("#pv-box").hidden = !can("dem_delegar");
+  $("#k-dem-box").hidden = $("#p-dem-box").hidden = !podeAba("demandas");
   $("#k-os-box").hidden = $("#p-os-box").hidden = !podeAba("os");
   $("#m-osref-box").hidden = !podeAba("os") || !["saida","troca"].includes(S.tipo);
   $("#m-novo").closest(".hint").hidden = !can("itens_cadastrar");
@@ -660,6 +668,7 @@ function renderDash(){
 
   graficoMeses(ret, ent, R.de, R.ate);
   renderDashOS(R);
+  renderDashDem(R);
 
   const somar = (lista, chave, valor) => { const o = {}; lista.forEach(m => { const k = String(chave(m)||"").trim() || "Não informado"; o[k] = o[k] || {v:0, n:0, u:0}; o[k].v += valor(m); o[k].n++; o[k].u += Number(m.qtd||0); }); return o; };
   const un = i => (porId.get(i)||{}).unidade || "";
@@ -766,13 +775,14 @@ async function carregarEquipe(){
 }
 function renderEquipe(){
   const E = S.eq;
-  if (!E) { $("#q-usuarios").innerHTML = `<tr><td colspan="6"><div class="empty">Carregando…</div></td></tr>`; return; }
+  if (!E) { $("#q-usuarios").innerHTML = `<tr><td colspan="7"><div class="empty">Carregando…</div></td></tr>`; return; }
   const us = [...E.usuarios].sort((a,b) => (b.ativo - a.ativo) || String(a.nome).localeCompare(String(b.nome),"pt-BR"));
   $("#q-usuarios").innerHTML = us.map(u => `<tr class="${u.ativo?"":"inativo"}">
     <td><b>${esc(u.nome||"—")}</b>${u.usuario===S.usuario?' <span class="muted">(você)</span>':""}</td>
     <td class="mono">${esc(u.usuario)}</td>
     <td>${esc(u.perfil)}</td>
     <td>${u.ativo ? '<span class="pill s-ok">Ativo</span>' : '<span class="pill p-ajuste">Bloqueado</span>'}</td>
+    <td class="hide-m num" style="white-space:nowrap">${u.telefone ? esc(fTel(u.telefone)) : '<span class="muted">—</span>'}</td>
     <td class="hide-s"><span class="mono senha" data-s="${esc(u.senha)}">••••••</span> <button class="link small-link" data-ver type="button">ver</button></td>
     <td class="n"><button class="btn small" data-u="${esc(u.usuario)}">Editar</button></td></tr>`).join("");
   // matriz de permissões
@@ -793,7 +803,7 @@ const gerarSenha = () => String(Math.floor(100000 + Math.random()*900000));
 function abrirUsuario(usuario){
   const E = S.eq; if (!E) return;
   const u = usuario ? E.usuarios.find(x => x.usuario===usuario) : null;
-  const v = u || {usuario:"", nome:"", senha:gerarSenha(), perfil:(E.perfis.find(p => !p.fixo)||E.perfis[0]).nome, ativo:true};
+  const v = u || {usuario:"", nome:"", senha:gerarSenha(), perfil:(E.perfis.find(p => !p.fixo)||E.perfis[0]).nome, ativo:true, telefone:""};
   const eu = u && u.usuario === S.usuario;
   $("#modal-box").innerHTML = `
     <h3>${u ? "Editar colaborador" : "Novo colaborador"}</h3>
@@ -802,8 +812,9 @@ function abrirUsuario(usuario){
       <div class="field"><label for="u-usuario">Usuário (para entrar) <span class="req">*</span></label><input class="input mono" id="u-usuario" value="${esc(v.usuario)}" autocapitalize="none" spellcheck="false" placeholder="Ex.: joao"></div>
       <div class="field"><label for="u-senha">Senha <span class="req">*</span></label><div class="actions" style="flex-wrap:nowrap"><input class="input mono" id="u-senha" value="${esc(v.senha)}"><button class="btn small" type="button" id="u-gerar">Gerar</button></div></div>
       <div class="field"><label for="u-perfil">Perfil</label><select class="input" id="u-perfil">${E.perfis.map(p => `<option ${p.nome===v.perfil?"selected":""}>${esc(p.nome)}</option>`).join("")}</select></div>
+      <div class="field"><label for="u-tel">WhatsApp (com DDD)</label><input class="input num" id="u-tel" inputmode="tel" value="${esc(v.telefone ? fTel(v.telefone) : "")}" placeholder="(21) 99999-9999"></div>
       <div class="field"><label for="u-ativo">Situação</label><select class="input" id="u-ativo" ${eu?"disabled":""}><option value="1" ${v.ativo?"selected":""}>Ativo: pode entrar</option><option value="0" ${v.ativo?"":"selected"}>Bloqueado: não entra mais</option></select></div>
-      <p class="hint full">Passe o usuário e a senha para o colaborador. O nome aparece no histórico em cada lançamento que ele fizer.</p>
+      <p class="hint full">Passe o usuário e a senha para o colaborador. O nome aparece no histórico em cada lançamento que ele fizer. O WhatsApp serve para avisar quando uma demanda for delegada a ele.</p>
       <div class="full actions"><button class="btn primary" type="submit" id="u-ok">${u ? "Salvar" : "Criar login"}</button><button class="btn" type="button" id="u-no">Cancelar</button><span class="hint" id="u-msg"></span></div>
     </form>`;
   $("#modal").hidden = false; $("#u-nome").focus();
@@ -817,10 +828,11 @@ function abrirUsuario(usuario){
   $("#f-u").addEventListener("submit", async ev => {
     ev.preventDefault();
     const msg = $("#u-msg"); msg.className = "hint err";
-    const nu = {nome:$("#u-nome").value.trim(), usuario:$("#u-usuario").value.trim().toLowerCase(), senha:$("#u-senha").value.trim(), perfil:$("#u-perfil").value, ativo:$("#u-ativo").value==="1"};
+    const nu = {nome:$("#u-nome").value.trim(), usuario:$("#u-usuario").value.trim().toLowerCase(), senha:$("#u-senha").value.trim(), perfil:$("#u-perfil").value, ativo:$("#u-ativo").value==="1", telefone:$("#u-tel").value.replace(/\D/g,"")};
     if (!nu.nome) { msg.textContent = "Informe o nome do colaborador."; return; }
     if (!/^[a-z0-9._@-]{2,40}$/.test(nu.usuario)) { msg.textContent = "Usuário: só letras minúsculas, números, ponto ou traço, sem espaços."; return; }
     if (nu.senha.length < 4) { msg.textContent = "A senha precisa ter pelo menos 4 caracteres."; return; }
+    if (nu.telefone && nu.telefone.length < 10) { msg.textContent = "WhatsApp incompleto: informe o DDD e o número."; return; }
     await enviar($("#u-ok"), msg, "salvarUsuario", {original: u ? u.usuario : "", u: nu}, r => {
       S.eq = r.equipe; fecharModal(); renderEquipe();
       if (eu) { S.usuario = nu.usuario; S.senha = nu.senha; guardar(); api("entrar").then(renderMe).catch(()=>{}); }
@@ -939,10 +951,10 @@ function lerCamposOS(msg){
   if (!v.local) { msg.className="hint err"; msg.textContent = "Informe o local."; return null; }
   return v;
 }
-function ligarPrazo(){
+function ligarPrazo(prio="#os-prio", prazo="#os-prazo"){
   let mexeu = false;
-  $("#os-prazo").addEventListener("input", () => { mexeu = true; });
-  $("#os-prio").addEventListener("change", () => { if (!mexeu) $("#os-prazo").value = prazoPara($("#os-prio").value); });
+  $(prazo).addEventListener("input", () => { mexeu = true; });
+  $(prio).addEventListener("change", () => { if (!mexeu) $(prazo).value = prazoPara($(prio).value); });
 }
 
 function novaOS(){
@@ -1016,6 +1028,7 @@ function abrirOS(id){
   if (!d.enc && d.atender) acoes.push(`<button class="btn ${o.status==="Em andamento"?"primary":""}" type="button" data-op="concluir">Concluir</button>`);
   if (!d.enc && (can("registrar_saida") || can("registrar_troca"))) acoes.push(`<button class="btn" type="button" data-op="material">Retirar material</button>`);
   if (!d.enc && d.ger) acoes.push(`<button class="btn" type="button" data-op="atribuir">${o.responsavelUsuario?"Trocar responsável":"Atribuir"}</button>`);
+  if (!d.enc && d.ger && o.responsavelUsuario) acoes.push(`<button class="btn wa" type="button" data-op="whats">Avisar no WhatsApp</button>`);
   if (d.ger || (d.abriu && o.status==="Aberta")) acoes.push(`<button class="btn" type="button" data-op="editar">Editar</button>`);
   if (can("os_abrir") || can("os_atender") || d.ger) acoes.push(`<button class="btn" type="button" data-op="nota">Anotar</button>`);
   if (!d.enc && d.ger) acoes.push(`<button class="btn danger" type="button" data-op="cancelar">Cancelar OS</button>`);
@@ -1092,6 +1105,7 @@ function acaoOS(o, op){
   const depois = () => abrirOS(o.id);
   const atualizar = (msg, extra) => enviar($("#os2-ok") || null, msg, "osAtualizar", Object.assign({id:o.id, op}, extra), depois);
   if (op === "iniciar") { enviar(null, $("#os-msg"), "osAtualizar", {id:o.id, op}, depois); return; }
+  if (op === "whats") { abrirWhats(o.responsavelUsuario, msgWhats("os", o)); return; }
   if (op === "material") {
     fecharModal(); setTab("registrar");
     const t = can("registrar_saida") ? "saida" : "troca"; setTipo(t);
@@ -1176,6 +1190,350 @@ function renderDashOS(R){
   barras("#d-os-custo", topN(custo, 10).map(([k,o]) => ({rotulo:k, v:o.v, txt:fBRL(o.v), tip:[["em material", fBRL(o.v)]]})), "Sem custo calculado: registre entradas com valor para os itens usados nas OS.");
   $("#d-os-atras").innerHTML = atras.length ? atras.sort(ordemOS).map(o => `<tr class="click" data-os="${esc(o.id)}"><td class="mono">${esc(o.numero)}</td><td><b>${esc(o.titulo)}</b><span class="sub">${esc(o.local||"")}</span></td><td>${esc(o.responsavel||"—")}</td><td class="n">${Math.max(1, Math.round((new Date(hoje()) - new Date(o.prazo)) / 864e5))} d</td></tr>`).join("")
     : `<tr><td colspan="4"><div class="empty">Nenhuma OS atrasada.</div></td></tr>`;
+}
+
+// ---------- demandas ----------
+const DEM_CATEGORIAS = OS_CATEGORIAS.filter(c => c !== "Outros").concat(["Vistoria","Compras e orçamentos","Outros"]);
+const demEnc = d => d.status==="Concluída" || d.status==="Cancelada";
+const demAbertas = () => S.dem.filter(d => !demEnc(d));
+const demAtrasada = d => !demEnc(d) && d.prazo && d.prazo < hoje();
+const demSemCiente = d => d.status==="Pendente" && d.responsavelUsuario && !d.cienteEm;
+const minhasNovas = () => S.dem.filter(d => demSemCiente(d) && d.responsavelUsuario===S.usuario);
+const ordemDem = (a,b) => (demAtrasada(b) - demAtrasada(a)) || ((PRIO_ORD[a.prioridade]??2) - (PRIO_ORD[b.prioridade]??2)) || String(a.prazo).localeCompare(String(b.prazo)) || String(a.numero).localeCompare(String(b.numero));
+function demStatusPill(d){
+  let txt = d.status, cls = {"Em andamento":"st-andamento","Concluída":"s-ok","Cancelada":"p-ajuste"}[d.status] || "st-aberta";
+  if (d.status==="Pendente") {
+    if (!d.responsavelUsuario) { txt = "Sem responsável"; cls = "p-ajuste"; }
+    else if (!d.cienteEm) { txt = "Aguardando ciente"; cls = "st-ciente"; }
+    else txt = "Ciente";
+  }
+  if (demAtrasada(d)) return `<span class="pill s-zero">${esc(txt)} · atrasada</span>`;
+  return `<span class="pill ${cls}">${esc(txt)}</span>`;
+}
+function demDireitos(d){
+  const del = can("dem_delegar"), livre = !d.responsavelUsuario, minha = d.responsavelUsuario === S.usuario;
+  return {del, livre, minha, enc: demEnc(d), exec: del || (can("dem_executar") && (minha || livre))};
+}
+const descRep = (n, u) => { n = Number(n)||1; if (u==="semanas") return n===1?"toda semana":`a cada ${n} semanas`; if (u==="meses") return n===1?"todo mês":n===12?"todo ano":`a cada ${n} meses`; return n===1?"todo dia":`a cada ${n} dias`; };
+const primeiroNome = s => String(s||"").trim().split(/\s+/)[0] || "";
+const fTel = t => { const d = String(t||"").replace(/\D/g,"").replace(/^55(?=\d{10,11}$)/,""); return d.length===11 ? `(${d.slice(0,2)}) ${d.slice(2,7)}-${d.slice(7)}` : d.length===10 ? `(${d.slice(0,2)}) ${d.slice(2,6)}-${d.slice(6)}` : d; };
+
+// aviso no WhatsApp: abre o app com a mensagem pronta para o responsável
+const linkSistema = aba => location.origin + location.pathname + "#" + aba;
+function msgWhats(tipo, x){
+  const quem = primeiroNome(x.responsavel);
+  const linhas = [
+    `Olá${quem ? ", "+quem : ""}! ${tipo==="os" ? "Uma ordem de serviço foi atribuída a você" : "Você recebeu uma demanda"} no Pier Manutenção:`,
+    `*${x.numero} · ${x.titulo}*`,
+    x.local ? `Local: ${x.local}` : "",
+    `Prioridade: ${x.prioridade||"Normal"} · Prazo: ${fData(x.prazo)}`,
+    x.descricao ? "\n" + String(x.descricao).split("\n\nPreventiva")[0].slice(0, 400) : "",
+    "",
+    tipo==="os" ? `Detalhes no sistema: ${linkSistema("os")}` : `Abra o sistema para ver os detalhes e dar o ciente: ${linkSistema("demandas")}`
+  ];
+  return linhas.filter((l,i) => l !== "" || i === 5).join("\n");
+}
+function abrirWhats(usuario, texto){
+  const c = S.colab.find(x => x.usuario === usuario);
+  let tel = String(c && c.telefone || "").replace(/\D/g,"");
+  if (tel && tel.length <= 11) tel = "55" + tel;
+  window.open(`https://wa.me/${tel}?text=${encodeURIComponent(texto)}`, "_blank", "noopener");
+  if (!tel) toast("Este colaborador não tem WhatsApp cadastrado. Escolha o contato no WhatsApp ou cadastre o número em Usuários.");
+}
+const temFone = usuario => { const c = S.colab.find(x => x.usuario === usuario); return !!(c && c.telefone); };
+
+// destaque para quem recebeu demandas novas
+function renderAvisoDem(){
+  const el = $("#aviso-dem"); if (!el) return;
+  const novas = S.senha && can("dem_executar") ? minhasNovas().sort(ordemDem) : [];
+  if (!novas.length) { el.innerHTML = ""; return; }
+  el.innerHTML = `<div class="aviso-dem" role="status">
+    <div class="aviso-txt"><b class="aviso-tit">${novas.length===1 ? "Você recebeu 1 demanda nova" : `Você recebeu ${novas.length} demandas novas`}</b>
+      <span>Abra cada uma e confirme com <b>Dar ciente</b> para a administração saber que você viu.</span></div>
+    <div class="aviso-lista">${novas.slice(0,4).map(d => `<button type="button" class="aviso-item" data-dem="${esc(d.id)}">${prioPill(d.prioridade)}<span class="ai-t"><span class="mono muted">${esc(d.numero)}</span> ${esc(d.titulo)}</span><span class="ai-p ${demAtrasada(d)?"atras":"muted"}">prazo ${fData(d.prazo)}</span></button>`).join("")}
+      ${novas.length>4 ? `<button type="button" class="link" id="aviso-todas">Ver todas as ${novas.length}</button>` : ""}</div>
+  </div>`;
+  const t = $("#aviso-todas"); if (t) t.onclick = () => { S.dFiltro = "ciente"; syncChips("#dm-filtros","f",S.dFiltro); setTab("demandas"); };
+}
+document.addEventListener("click", e => { const b = e.target.closest("[data-dem]"); if (b) abrirDem(b.dataset.dem); });
+
+function renderPainelDem(){
+  if (!podeAba("demandas")) return;
+  const abertas = demAbertas(), atras = abertas.filter(demAtrasada), semCiente = abertas.filter(demSemCiente);
+  const delega = can("dem_delegar");
+  const minhas = abertas.filter(d => d.responsavelUsuario === S.usuario);
+  $("#k-dem").textContent = abertas.length;
+  $("#k-dem-sub").textContent = atras.length ? `${atras.length} atrasada${atras.length===1?"":"s"}` : semCiente.length ? `${semCiente.length} aguardando ciente` : `${abertas.filter(d=>d.status==="Em andamento").length} em andamento`;
+  $("#k-dem-box").classList.toggle("crit", atras.length>0);
+  const b = $("#b-dem"), novas = minhasNovas().length;
+  b.textContent = delega ? abertas.length : minhas.length;
+  b.classList.toggle("alert", novas>0 || (delega && atras.length>0));
+  // quem executa vê primeiro as suas
+  const doPainel = delega ? abertas : abertas.filter(d => d.responsavelUsuario === S.usuario || !d.responsavelUsuario);
+  const lista = [...doPainel].sort((x,y) => ((y.responsavelUsuario===S.usuario) - (x.responsavelUsuario===S.usuario)) || ordemDem(x,y)).slice(0,6);
+  $("#p-dem-tit").textContent = delega ? "Demandas em aberto" : "Suas demandas";
+  $("#p-dem").innerHTML = lista.length ? lista.map(d => `
+    <button class="row row-btn" data-dem="${esc(d.id)}" type="button"><div>${prioPill(d.prioridade)}</div>
+      <div><div class="t"><span class="mono muted">${esc(d.numero)}</span> ${esc(d.titulo)}</div><div class="d">${esc([d.local, d.responsavel||"sem responsável"].filter(Boolean).join(" · "))}</div></div>
+      <div class="r">${demStatusPill(d)}<div class="d">${demAtrasada(d) ? `<span class="atras">venceu ${fData(d.prazo)}</span>` : "prazo "+fData(d.prazo)}</div></div></button>`).join("")
+    + (doPainel.length>6 ? `<div class="empty"><button class="link" data-go2="demandas">Ver todas as ${doPainel.length}</button></div>`:"")
+    : `<div class="empty">${delega ? "Nenhuma demanda em aberto." : "Nenhuma demanda em aberto com você."}${delega ? ` <button class="link" type="button" id="p-dem-nova">Criar uma demanda</button>` : ""}</div>`;
+  const n = $("#p-dem-nova"); if (n) n.onclick = () => novaDem();
+}
+
+function renderDem(){
+  const q = norm($("#dm-busca").value), f = S.dFiltro;
+  const sel = $("#dm-resp"), cur = sel.value;
+  const pessoas = [...new Map(S.dem.filter(d => d.responsavelUsuario).map(d => [d.responsavelUsuario, d.responsavel])).entries()].sort((a,b) => String(a[1]).localeCompare(String(b[1]),"pt-BR"));
+  sel.innerHTML = `<option value="">Todos os responsáveis</option><option value="-" ${cur==="-"?"selected":""}>Sem responsável</option>` + pessoas.map(([u,n]) => `<option value="${esc(u)}" ${u===cur?"selected":""}>${esc(n)}</option>`).join("");
+  sel.hidden = !(can("dem_ver") || can("dem_delegar"));
+  $$("#dm-filtros .chip").forEach(c => { if (c.dataset.f==="minhas") c.hidden = !can("dem_executar"); });
+  const resp = sel.hidden ? "" : sel.value;
+  const list = S.dem.filter(d => {
+    if (f==="aberto" && demEnc(d)) return false;
+    if (f==="minhas" && (demEnc(d) || d.responsavelUsuario !== S.usuario)) return false;
+    if (f==="ciente" && !demSemCiente(d)) return false;
+    if (f==="atrasadas" && !demAtrasada(d)) return false;
+    if (f==="concluidas" && d.status!=="Concluída") return false;
+    if (f==="canceladas" && d.status!=="Cancelada") return false;
+    if (resp==="-" && d.responsavelUsuario) return false;
+    if (resp && resp!=="-" && d.responsavelUsuario!==resp) return false;
+    if (q && !norm([d.numero,d.titulo,d.local,d.categoria,d.responsavel,d.criadaPor,d.descricao,d.os].join(" ")).includes(q)) return false;
+    return true;
+  }).sort((x,y) => demEnc(x)||demEnc(y) ? String(y.concluidaEm||y.criadaEm).localeCompare(String(x.concluidaEm||x.criadaEm)) : ordemDem(x,y));
+  const vazio = {aberto:"Nenhuma demanda em aberto.", minhas:"Nenhuma demanda em aberto com você.", ciente:"Nenhuma demanda aguardando ciente.", atrasadas:"Nenhuma demanda atrasada.", concluidas:"Nenhuma demanda concluída nos últimos 90 dias.", canceladas:"Nenhuma demanda cancelada nos últimos 90 dias.", todas:"Nenhuma demanda registrada ainda."}[f];
+  $("#dm-body").innerHTML = list.length ? list.map(d => `<tr class="click" data-dem="${esc(d.id)}" tabindex="0">
+    <td class="mono">${esc(d.numero)}</td>
+    <td><b>${esc(d.titulo)}</b><span class="sub">${esc([d.local, d.categoria, d.preventiva ? "preventiva" : "", d.os ? d.os : ""].filter(Boolean).join(" · "))}</span><span class="so-s">${prioPill(d.prioridade)} ${esc(d.responsavel||"")}</span></td>
+    <td class="hide-s">${esc(d.responsavel || "—")}</td>
+    <td class="hide-s">${prioPill(d.prioridade)}</td>
+    <td>${demStatusPill(d)}</td>
+    <td class="hide-s num" style="white-space:nowrap">${demEnc(d) ? '<span class="muted">'+fData(d.concluidaEm)+'</span>' : fData(d.prazo)}</td></tr>`).join("")
+    : `<tr><td colspan="6"><div class="empty">${q||resp ? "Nenhuma demanda com esses filtros." : vazio}${f==="aberto" && can("dem_delegar") ? ` <button class="link" type="button" id="dm-vazio-nova">Criar uma demanda</button>` : ""}</div></td></tr>`;
+  const n = $("#dm-vazio-nova"); if (n) n.onclick = () => novaDem();
+  renderPrev();
+}
+$("#dm-busca").addEventListener("input", renderDem);
+$("#dm-resp").addEventListener("change", renderDem);
+$$("#dm-filtros .chip").forEach(c => c.addEventListener("click", () => { S.dFiltro = c.dataset.f; syncChips("#dm-filtros","f",S.dFiltro); renderDem(); }));
+$("#dm-nova").addEventListener("click", () => novaDem());
+$("#dm-body").addEventListener("keydown", e => { if (e.key==="Enter" && e.target.dataset.dem) abrirDem(e.target.dataset.dem); });
+
+const opcoesColab = (sel, vazio) => `<option value="">${esc(vazio)}</option>` + S.colab.map(c => `<option value="${esc(c.usuario)}" ${c.usuario===sel?"selected":""}>${esc(c.nome)}</option>`).join("");
+function camposDem(v, comResp){
+  const cats = DEM_CATEGORIAS.includes(v.categoria) || !v.categoria ? DEM_CATEGORIAS : [v.categoria, ...DEM_CATEGORIAS];
+  return `
+      <div class="field full"><label for="dm-titulo">Demanda <span class="req">*</span></label><input class="input" id="dm-titulo" value="${esc(v.titulo||"")}" placeholder="Ex.: Trocar as lâmpadas queimadas do hall do Bloco B" maxlength="120"></div>
+      ${comResp ? `<div class="field full"><label for="dm-r">Delegar para</label><select class="input" id="dm-r">${opcoesColab(v.responsavelUsuario||"", "Sem responsável (qualquer um da equipe pode pegar)")}</select></div>` : ""}
+      <div class="field"><label for="dm-local">Local</label><input class="input" id="dm-local" value="${esc(v.local||"")}" list="dl-local" placeholder="Ex.: Bloco B, Piscina, Portaria"></div>
+      <div class="field"><label for="dm-cat">Categoria</label><select class="input" id="dm-cat"><option value="">Selecione</option>${cats.map(c=>`<option ${c===v.categoria?"selected":""}>${esc(c)}</option>`).join("")}</select></div>
+      <div class="field"><label for="dm-prio">Prioridade</label><select class="input" id="dm-prio">${["Urgente","Alta","Normal","Baixa"].map(p=>`<option ${p===(v.prioridade||"Normal")?"selected":""}>${p}</option>`).join("")}</select></div>
+      <div class="field"><label for="dm-prazo">Prazo</label><input class="input" type="date" id="dm-prazo" value="${esc(v.prazo || prazoPara(v.prioridade||"Normal"))}"></div>
+      <div class="field full"><label for="dm-desc">Detalhes</label><textarea class="input" id="dm-desc" placeholder="O que precisa ser feito, materiais, horário combinado com morador…" maxlength="3000">${esc(v.descricao||"")}</textarea></div>`;
+}
+function lerCamposDem(msg){
+  const v = {titulo:$("#dm-titulo").value.trim(), local:$("#dm-local").value.trim(), categoria:$("#dm-cat").value, prioridade:$("#dm-prio").value, prazo:$("#dm-prazo").value, descricao:$("#dm-desc").value.trim()};
+  if (!v.titulo) { msg.className="hint err"; msg.textContent = "Descreva a demanda em poucas palavras."; return null; }
+  return v;
+}
+function preencherLocais(){
+  $("#dl-local").innerHTML = [...new Set(S.os.map(o=>o.local).concat(S.dem.map(d=>d.local), S.movs.map(m=>m.destino)).filter(Boolean).map(s=>String(s).trim()))].sort().slice(0,300).map(v=>`<option value="${esc(v)}">`).join("");
+}
+
+function novaDem(){
+  if (!can("dem_delegar")) return;
+  preencherLocais();
+  $("#modal-box").innerHTML = `
+    <h3>Nova demanda</h3>
+    <form class="form" id="f-dm" novalidate autocomplete="off">
+      ${camposDem({}, true)}
+      <div class="full actions"><button class="btn primary" type="submit" id="dm-ok">Criar demanda</button><button class="btn" type="button" id="dm-no">Cancelar</button><span class="hint" id="dm-msg"></span></div>
+    </form>`;
+  $("#modal").hidden = false; $("#dm-titulo").focus();
+  $("#dm-no").onclick = fecharModal;
+  ligarPrazo("#dm-prio", "#dm-prazo");
+  $("#f-dm").addEventListener("submit", async ev => {
+    ev.preventDefault();
+    const msg = $("#dm-msg"), v = lerCamposDem(msg); if (!v) return;
+    if ($("#dm-r").value) v.responsavelUsuario = $("#dm-r").value;
+    const r = await enviar($("#dm-ok"), msg, "demCriar", {dem:v});
+    if (!r) return;
+    fecharModal(); setTab("demandas"); abrirDem(r.demId, {avisar:!!v.responsavelUsuario});
+  });
+}
+
+function abrirDem(id, opc){
+  const d = S.dem.find(x => x.id === id); if (!d) { toast("Esta demanda não está mais na lista. Atualize a página.", true); return; }
+  opc = opc || {};
+  const dir = demDireitos(d);
+  const linhasAnd = String(d.andamento||"").split("\n").filter(Boolean).reverse();
+  const os = d.os ? S.os.find(o => o.numero === d.os) : null;
+  const pv = d.preventiva ? S.prev.find(p => p.id === d.preventiva) : null;
+  const acoes = [];
+  if (dir.minha && d.status==="Pendente" && !d.cienteEm) acoes.push(`<button class="btn primary" type="button" data-dop="ciente">Dar ciente</button>`);
+  if (d.status==="Pendente" && dir.exec) acoes.push(`<button class="btn ${dir.minha && !d.cienteEm ? "" : "primary"}" type="button" data-dop="iniciar">Iniciar</button>`);
+  if (!dir.enc && dir.exec) acoes.push(`<button class="btn ${d.status==="Em andamento"?"primary":""}" type="button" data-dop="concluir">Concluir</button>`);
+  const avisar = opc.avisar && dir.del && d.responsavelUsuario && !dir.enc;
+  if (!dir.enc && dir.del && d.responsavelUsuario && !avisar) acoes.push(`<button class="btn wa" type="button" data-dop="whats">Avisar no WhatsApp</button>`);
+  if (!dir.enc && dir.del) acoes.push(`<button class="btn" type="button" data-dop="atribuir">${d.responsavelUsuario ? "Delegar para outra pessoa" : "Delegar"}</button>`);
+  if (!dir.enc && !d.os && can("os_abrir") && (dir.del || dir.minha)) acoes.push(`<button class="btn" type="button" data-dop="os">Abrir OS</button>`);
+  if (dir.del) acoes.push(`<button class="btn" type="button" data-dop="editar">Editar</button>`);
+  if (dir.del || dir.minha || dir.livre || can("dem_ver")) acoes.push(`<button class="btn" type="button" data-dop="nota">Anotar</button>`);
+  if (!dir.enc && dir.del) acoes.push(`<button class="btn danger" type="button" data-dop="cancelar">Cancelar demanda</button>`);
+  if (dir.enc && dir.del) acoes.push(`<button class="btn" type="button" data-dop="reabrir">Reabrir</button>`);
+  const ciente = d.cienteEm ? fDataHora(d.cienteEm) : d.responsavelUsuario ? `<span class="${demEnc(d)?"":"atras"}">Ainda não</span>` : "—";
+  $("#modal-box").innerHTML = `
+    <div class="os-top"><span class="mono muted">${esc(d.numero)}</span>${demStatusPill(d)}${prioPill(d.prioridade)}${d.preventiva ? '<span class="pill p-ajuste">Preventiva</span>' : ""}</div>
+    <h3 class="os-tit">${esc(d.titulo)}</h3>
+    ${avisar ? `<div class="aviso-wa"><span>Avise ${esc(primeiroNome(d.responsavel))} pelo WhatsApp. A mensagem já vai pronta, com o link do sistema.${temFone(d.responsavelUsuario) ? "" : " <b>Sem número cadastrado:</b> você escolhe o contato no WhatsApp."}</span><button class="btn wa" type="button" data-dop="whats">Enviar no WhatsApp</button></div>` : ""}
+    <dl class="os-info">
+      <div><dt>Responsável</dt><dd>${esc(d.responsavel||"Sem responsável")}</dd></div>
+      <div><dt>Ciente</dt><dd>${ciente}</dd></div>
+      <div><dt>Prazo</dt><dd class="${demAtrasada(d)?"atras":""}">${fData(d.prazo)}${demAtrasada(d)?" · atrasada":""}</dd></div>
+      <div><dt>Local</dt><dd>${esc(d.local||"—")}</dd></div>
+      <div><dt>Categoria</dt><dd>${esc(d.categoria||"—")}</dd></div>
+      <div><dt>Criada</dt><dd>${fDataHora(d.criadaEm)} por ${esc(d.criadaPor||"—")}</dd></div>
+      ${d.preventiva ? `<div><dt>Preventiva</dt><dd>${pv ? `${esc(pv.numero)} · repete ${esc(descRep(pv.intervalo, pv.unidade))}` : "Sim"}</dd></div>` : ""}
+      ${d.os ? `<div><dt>OS gerada</dt><dd>${os ? `<button class="link" type="button" data-os="${esc(os.id)}">${esc(d.os)}</button> · ${esc(os.status)}` : esc(d.os)}</dd></div>` : ""}
+      ${d.concluidaEm ? `<div><dt>${d.status==="Cancelada"?"Cancelada":"Concluída"}</dt><dd>${fDataHora(d.concluidaEm)}${d.concluidaPor?" por "+esc(d.concluidaPor):""}</dd></div>` : ""}
+    </dl>
+    ${d.descricao ? `<p class="os-desc">${esc(d.descricao)}</p>` : ""}
+    ${d.conclusao ? `<div class="os-sol"><b>O que foi feito</b><p>${esc(d.conclusao)}</p></div>` : ""}
+    ${d.motivoCancelamento ? `<div class="os-sol canc"><b>Motivo do cancelamento</b><p>${esc(d.motivoCancelamento)}</p></div>` : ""}
+    <div class="os-acoes actions">${acoes.join("")}</div>
+    <div id="os-form"></div>
+    <section><h4>Andamento</h4><ol class="timeline">${linhasAnd.map(l => { const [q, ...resto] = l.split(" · "); return `<li><span class="when">${esc(q)}</span> ${esc(resto.join(" · "))}</li>`; }).join("")}</ol></section>
+    <div class="actions" style="margin-top:6px"><button class="btn" type="button" id="os-fechar">Fechar</button><span class="hint" id="os-msg"></span></div>`;
+  $("#modal-box").classList.add("largo");
+  $("#modal").hidden = false;
+  $("#os-fechar").onclick = fecharModal;
+  $("#modal-box").onclick = e => {
+    if (e.target.closest("[data-os]")) return;
+    const b = e.target.closest("[data-dop]"); if (b) acaoDem(d, b.dataset.dop);
+  };
+}
+function acaoDem(d, op){
+  const depois = () => abrirDem(d.id);
+  const atualizar = (msg, extra, apos) => enviar($("#os2-ok") || null, msg, "demAtualizar", Object.assign({id:d.id, op}, extra), apos || depois);
+  if (op === "ciente" || op === "iniciar") { enviar(null, $("#os-msg"), "demAtualizar", {id:d.id, op}, depois); return; }
+  if (op === "whats") { abrirWhats(d.responsavelUsuario, msgWhats("dem", d)); return; }
+  if (op === "os") return formOS(`<p class="full" style="margin:0">Abre uma OS com os mesmos dados desta demanda (serviço, local, prioridade e prazo). Os materiais retirados ficam ligados à OS.</p>`, msg => {
+      atualizar(msg, {}, () => { const n = (S.dem.find(x => x.id===d.id)||{}).os; const o = n && S.os.find(x => x.numero===n); if (o) abrirOS(o.id); else depois(); });
+    }, "Abrir OS");
+  if (op === "concluir") return formOS(`<div class="field full"><label for="dm-sol">O que foi feito <span class="req">*</span></label><textarea class="input" id="dm-sol" placeholder="Ex.: troquei 4 lâmpadas; o reator de uma luminária também estava queimado" maxlength="3000"></textarea></div>`, msg => {
+      const c = $("#dm-sol").value.trim(); if (!c) { msg.className="hint err"; msg.textContent="Descreva o que foi feito."; return; }
+      atualizar(msg, {conclusao:c});
+    }, "Concluir demanda");
+  if (op === "cancelar") return formOS(`<div class="field full"><label for="dm-mot">Motivo do cancelamento <span class="req">*</span></label><input class="input" id="dm-mot" placeholder="Ex.: criada em duplicidade, não é mais necessária"></div>`, msg => {
+      const m = $("#dm-mot").value.trim(); if (!m) { msg.className="hint err"; msg.textContent="Informe o motivo."; return; }
+      atualizar(msg, {motivo:m});
+    }, "Cancelar demanda");
+  if (op === "reabrir") return formOS(`<div class="field full"><label for="dm-mot">Por que reabrir?</label><input class="input" id="dm-mot" placeholder="Ex.: o serviço não ficou bom"></div>`, msg => atualizar(msg, {motivo:$("#dm-mot").value.trim()}), "Reabrir demanda");
+  if (op === "nota") return formOS(`<div class="field full"><label for="dm-nota">Anotação <span class="req">*</span></label><textarea class="input" id="dm-nota" placeholder="Ex.: aguardando o morador liberar o acesso" maxlength="1000"></textarea></div>`, msg => {
+      const n = $("#dm-nota").value.trim(); if (!n) { msg.className="hint err"; msg.textContent="Escreva a anotação."; return; }
+      atualizar(msg, {nota:n});
+    }, "Salvar anotação");
+  if (op === "atribuir") return formOS(`<div class="field full"><label for="dm-r2">Delegar para</label><select class="input" id="dm-r2">${opcoesColab(d.responsavelUsuario, "Sem responsável")}</select><span class="hint">A pessoa nova precisa dar o ciente de novo.</span></div>`, msg => {
+      const u = $("#dm-r2").value;
+      atualizar(msg, {responsavelUsuario:u}, () => abrirDem(d.id, {avisar:!!u}));
+    }, "Salvar");
+  if (op === "editar") { preencherLocais(); formOS(camposDem(d, false), msg => { const v = lerCamposDem(msg); if (v) atualizar(msg, {dem:v}); }, "Salvar alterações"); ligarPrazo("#dm-prio", "#dm-prazo"); }
+}
+
+// ---------- preventivas ----------
+const FREQS = [["1-semanas","Toda semana"],["15-dias","A cada 15 dias"],["1-meses","Todo mês"],["2-meses","A cada 2 meses"],["3-meses","A cada 3 meses"],["6-meses","A cada 6 meses"],["12-meses","Todo ano"],["outra","Outra frequência"]];
+function renderPrev(){
+  if (!can("dem_delegar")) return;
+  const lista = [...S.prev].sort((a,b) => (/^s/i.test(b.ativa) - /^s/i.test(a.ativa)) || String(a.proxima).localeCompare(String(b.proxima)));
+  $("#pv-body").innerHTML = lista.length ? lista.map(p => { const ativa = /^s/i.test(p.ativa); return `<tr class="click ${ativa?"":"inativo"}" data-pv="${esc(p.id)}" tabindex="0">
+    <td class="mono">${esc(p.numero)}</td>
+    <td><b>${esc(p.titulo)}</b><span class="sub">${esc([p.local, p.categoria].filter(Boolean).join(" · "))}</span></td>
+    <td>${esc(descRep(p.intervalo, p.unidade))}</td>
+    <td class="hide-s">${esc(p.responsavel || "—")}</td>
+    <td class="num" style="white-space:nowrap">${ativa ? fData(p.proxima) : '<span class="pill p-ajuste">Pausada</span>'}</td></tr>`; }).join("")
+    : `<tr><td colspan="5"><div class="empty">Nenhuma preventiva cadastrada. Exemplos: testar o gerador toda semana, limpar a caixa d'água a cada 6 meses, revisar extintores todo mês.</div></td></tr>`;
+}
+$("#pv-body").addEventListener("click", e => { const r = e.target.closest("[data-pv]"); if (r) abrirPrev(r.dataset.pv); });
+$("#pv-body").addEventListener("keydown", e => { if (e.key==="Enter" && e.target.dataset.pv) abrirPrev(e.target.dataset.pv); });
+$("#pv-nova").addEventListener("click", () => abrirPrev(null));
+
+function abrirPrev(id){
+  if (!can("dem_delegar")) return;
+  const p = id ? S.prev.find(x => x.id === id) : null;
+  const v = p || {titulo:"", local:"", categoria:"", prioridade:"Normal", responsavelUsuario:"", intervalo:1, unidade:"meses", prazoDias:3, proxima:hoje(), descricao:"", ativa:"Sim"};
+  const chave = `${Number(v.intervalo)||1}-${v.unidade||"meses"}`;
+  const freq = FREQS.some(f => f[0]===chave) ? chave : "outra";
+  const cats = DEM_CATEGORIAS.includes(v.categoria) || !v.categoria ? DEM_CATEGORIAS : [v.categoria, ...DEM_CATEGORIAS];
+  preencherLocais();
+  $("#modal-box").innerHTML = `
+    <h3>${p ? "Preventiva " + esc(p.numero) : "Nova preventiva"}</h3>
+    <form class="form" id="f-pv" novalidate autocomplete="off">
+      <div class="field full"><label for="pv-titulo">Tarefa <span class="req">*</span></label><input class="input" id="pv-titulo" value="${esc(v.titulo)}" placeholder="Ex.: Testar o gerador" maxlength="120"></div>
+      <div class="field"><label for="pv-freq">Repete</label><select class="input" id="pv-freq">${FREQS.map(f => `<option value="${f[0]}" ${f[0]===freq?"selected":""}>${f[1]}</option>`).join("")}</select></div>
+      <div class="field" id="pv-outra" ${freq==="outra"?"":"hidden"}><label for="pv-n">A cada</label><div class="actions" style="flex-wrap:nowrap"><input class="input num" id="pv-n" inputmode="numeric" value="${esc(v.intervalo)}" style="max-width:5.5rem"><select class="input" id="pv-u">${["dias","semanas","meses"].map(u => `<option ${u===v.unidade?"selected":""}>${u}</option>`).join("")}</select></div></div>
+      <div class="field"><label for="pv-prox">${p ? "Próxima data" : "Primeira data"}</label><input class="input" type="date" id="pv-prox" value="${esc(v.proxima || hoje())}"></div>
+      <div class="field"><label for="pv-dias">Dias para fazer</label><input class="input num" id="pv-dias" inputmode="numeric" value="${esc(v.prazoDias)}"><span class="hint">O prazo de cada demanda é a data + esses dias.</span></div>
+      <div class="field"><label for="pv-r">Responsável</label><select class="input" id="pv-r">${opcoesColab(v.responsavelUsuario, "Sem responsável")}</select></div>
+      <div class="field"><label for="pv-prio">Prioridade</label><select class="input" id="pv-prio">${["Urgente","Alta","Normal","Baixa"].map(x=>`<option ${x===(v.prioridade||"Normal")?"selected":""}>${x}</option>`).join("")}</select></div>
+      <div class="field"><label for="pv-local">Local</label><input class="input" id="pv-local" value="${esc(v.local)}" list="dl-local" placeholder="Ex.: Casa de máquinas"></div>
+      <div class="field"><label for="pv-cat">Categoria</label><select class="input" id="pv-cat"><option value="">Selecione</option>${cats.map(c=>`<option ${c===v.categoria?"selected":""}>${esc(c)}</option>`).join("")}</select></div>
+      <div class="field full"><label for="pv-desc">Como fazer</label><textarea class="input" id="pv-desc" placeholder="Passo a passo, pontos para conferir, materiais" maxlength="3000">${esc(v.descricao)}</textarea></div>
+      <label class="perm full"><input type="checkbox" id="pv-ativa" ${/^s/i.test(v.ativa)?"checked":""}> Ativa: criar as demandas nas datas (desmarque para pausar)</label>
+      <div class="full actions"><button class="btn primary" type="submit" id="pv-ok">${p ? "Salvar" : "Criar preventiva"}</button><button class="btn" type="button" id="pv-no">Cancelar</button>
+        ${p ? `<button class="btn danger" type="button" id="pv-del" style="margin-left:auto">Excluir</button>` : ""}<span class="hint" id="pv-msg"></span></div>
+      <div class="confirm full" id="pv-conf" hidden><span>Excluir a preventiva <b>${esc(p ? p.numero : "")}</b>? As demandas que ela já criou continuam na lista.</span><div class="actions"><button class="btn danger" type="button" id="pv-del-ok">Sim, excluir</button><button class="btn" type="button" id="pv-del-no">Manter</button></div></div>
+    </form>`;
+  $("#modal").hidden = false; $("#pv-titulo").focus();
+  $("#pv-no").onclick = fecharModal;
+  $("#pv-freq").onchange = () => { $("#pv-outra").hidden = $("#pv-freq").value !== "outra"; };
+  if (p) {
+    $("#pv-del").onclick = () => { $("#pv-conf").hidden = false; };
+    $("#pv-del-no").onclick = () => { $("#pv-conf").hidden = true; };
+    $("#pv-del-ok").onclick = () => enviar($("#pv-del-ok"), $("#pv-msg"), "excluirPreventiva", {id:p.id}, fecharModal);
+  }
+  $("#f-pv").addEventListener("submit", ev => {
+    ev.preventDefault();
+    const msg = $("#pv-msg"); msg.className = "hint err";
+    const f = $("#pv-freq").value;
+    const [n, u] = f === "outra" ? [Math.round(pQtd($("#pv-n").value)), $("#pv-u").value] : [Number(f.split("-")[0]), f.split("-")[1]];
+    const nv = {id: p ? p.id : "", titulo:$("#pv-titulo").value.trim(), intervalo:n, unidade:u, proxima:$("#pv-prox").value, prazoDias:$("#pv-dias").value.trim(),
+      responsavelUsuario:$("#pv-r").value, prioridade:$("#pv-prio").value, local:$("#pv-local").value.trim(), categoria:$("#pv-cat").value, descricao:$("#pv-desc").value.trim(), ativa:$("#pv-ativa").checked};
+    if (!nv.titulo) { msg.textContent = "Descreva a tarefa em poucas palavras."; return; }
+    if (!(n >= 1 && n <= 365)) { msg.textContent = "Informe de quanto em quanto tempo a tarefa se repete."; return; }
+    if (!nv.proxima) { msg.textContent = "Informe a data."; return; }
+    enviar($("#pv-ok"), msg, "salvarPreventiva", {prev:nv}, fecharModal);
+  });
+}
+
+// ---------- dashboard: demandas ----------
+function renderDashDem(R){
+  const bloco = $("#d-dem-bloco");
+  if (!R.demandas) { bloco.hidden = true; return; }
+  bloco.hidden = false;
+  const noPer = s => { const x = String(s||"").slice(0,10); return x && x >= R.de && x <= R.ate; };
+  const criadas = R.demandas.filter(d => noPer(d.criadaEm));
+  const concl = R.demandas.filter(d => d.status==="Concluída" && noPer(d.concluidaEm));
+  const abertas = R.demandas.filter(d => !demEnc(d));
+  const atras = abertas.filter(demAtrasada);
+  const semCiente = abertas.filter(demSemCiente);
+  const hCiente = criadas.filter(d => d.cienteEm).map(d => (dt(d.cienteEm) - dt(d.criadaEm)) / 36e5).filter(h => h >= 0);
+  const mCiente = hCiente.length ? hCiente.reduce((s,h)=>s+h,0) / hCiente.length : null;
+  const noPrazo = concl.filter(d => d.prazo && String(d.concluidaEm).slice(0,10) <= d.prazo).length;
+  const fH = h => h === null ? "—" : h < 1 ? "menos de 1 h" : h < 48 ? `${fNum(Math.round(h))} h` : `${fNum(Math.round(h/24*10)/10)} dias`;
+  const kpi = (lbl, val, sub, cls) => `<div class="kpi static ${cls||""}"><span class="lbl">${lbl}</span><span class="val">${val}</span><span class="sub">${sub}</span></div>`;
+  $("#d-dem-kpis").innerHTML = [
+    kpi("Demandas criadas", criadas.length, `${criadas.filter(d=>d.preventiva).length} por preventiva`),
+    kpi("Demandas concluídas", concl.length, "no período"),
+    kpi("Em aberto agora", abertas.length, `${semCiente.length} aguardando ciente`, semCiente.length ? "warn" : ""),
+    kpi("Atrasadas agora", atras.length, "prazo vencido e ainda abertas", atras.length?"crit":""),
+    kpi("Tempo até o ciente", fH(mCiente), hCiente.length ? `média de ${hCiente.length} demanda${hCiente.length===1?"":"s"}` : "nenhum ciente no período"),
+    kpi("Concluídas no prazo", concl.length ? Math.round(noPrazo/concl.length*100)+"%" : "—", concl.length ? `${noPrazo} de ${concl.length}` : "nenhuma concluída no período")
+  ].join("");
+  const conta = (lista, chave) => { const m = {}; lista.forEach(d => { const k = String(chave(d)||"").trim() || "Sem responsável"; m[k] = m[k] || {v:0}; m[k].v++; }); return m; };
+  barras("#d-dem-resp", topN(conta(abertas, d=>d.responsavel), 10).map(([k,o]) => ({rotulo:k, v:o.v, txt:String(o.v), tip:[["em aberto", String(o.v)]]})), "Nenhuma demanda em aberto.");
+  barras("#d-dem-colab", topN(conta(concl, d=>d.concluidaPor||d.responsavel), 10).map(([k,o]) => ({rotulo:k, v:o.v, txt:String(o.v), tip:[["concluídas", String(o.v)]]})), "Nenhuma demanda concluída no período.");
+  $("#d-dem-atras").innerHTML = atras.length ? atras.sort(ordemDem).map(d => `<tr class="click" data-dem="${esc(d.id)}"><td class="mono">${esc(d.numero)}</td><td><b>${esc(d.titulo)}</b><span class="sub">${esc(d.local||"")}</span></td><td>${esc(d.responsavel||"—")}</td><td>${d.cienteEm ? fData(d.cienteEm) : d.responsavelUsuario ? '<span class="atras">não</span>' : "—"}</td><td class="n">${Math.max(1, Math.round((new Date(hoje()) - new Date(d.prazo)) / 864e5))} d</td></tr>`).join("")
+    : `<tr><td colspan="5"><div class="empty">Nenhuma demanda atrasada.</div></td></tr>`;
 }
 
 // ---------- importação de inventário ----------
